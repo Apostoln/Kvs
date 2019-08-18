@@ -1,43 +1,43 @@
 use std::process::exit;
-use clap::{App, Arg, SubCommand};
+use structopt::StructOpt;
 
 fn unimpl() {
     eprintln!("unimplemented");
     exit(-1);
 }
 
-fn main() {
-    let matches = App::new("Kvs")
-                                .name(env!("CARGO_PKG_NAME"))
-                                .version(env!("CARGO_PKG_VERSION"))
-                                .author(env!("CARGO_PKG_AUTHORS"))
-                                .about(env!("CARGO_PKG_DESCRIPTION"))
-                                .subcommand(SubCommand::with_name("get")
-                                    .about("Get value by key")
-                                    .arg(Arg::with_name("KEY")
-                                        .required(true)))
-                                .subcommand(SubCommand::with_name("set")
-                                    .about("Set value by key")
-                                    .arg(Arg::with_name("KEY")
-                                        .required(true))
-                                    .arg(Arg::with_name("VALUE")
-                                        .required(true)))
-                                .subcommand(SubCommand::with_name("rm")
-                                    .about("Remove value by key")
-                                    .arg(Arg::with_name("KEY")
-                                        .required(true)))
-                                .get_matches();
+#[derive(StructOpt, Debug)]
+#[structopt(name = "kvs")]
+enum Command {
+    #[structopt(name = "set", about = "Set value and key")]
+    Set {
+        #[structopt(name = "KEY", required = true)]
+        key : String,
+        #[structopt(name = "VALUE", required = true)]
+        value : String,
+    },
+    #[structopt(name = "get", about = "Get value by key")]
+    Get {
+        #[structopt(name = "KEY", required = true)]
+        key : String,
+    },
+    #[structopt(name = "rm", about = "Remove value by key")]
+    Remove {
+        #[structopt(name = "KEY", required = true)]
+        key : String,
+    }
+}
 
-    match matches.subcommand() {
-        ("get", _) => {
+fn main() {
+    match Command::from_args() {
+        Command::Set {key : _, value : _} => {
             unimpl();
         }
-        ("set", _) => {
+        Command::Get {key : _} => {
             unimpl();
         }
-        ("rm", _) => {
+        Command::Remove {key : _} => {
             unimpl();
         }
-        _ => unreachable!(),
     }
 }

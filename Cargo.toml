@@ -3,10 +3,12 @@ name = "kvs"
 version = "0.1.0"
 authors = ["Nik Bond <nikbond97@gmail.com>"]
 edition = "2018"
+about = "Key-value storage"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 assert_cmd = "0.11.0"
 predicates = "1.0.0"
-clap = "2.33.0"
+structopt = { version = "0.2.18", features = [ "paw" ] }
+paw = "1.0"
