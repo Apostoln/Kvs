@@ -1,21 +1,22 @@
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{Write, Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom, Write};
 
 use serde_json;
 
-pub use crate::error::{KvError, Result};
 use crate::error::KvError::KeyNotFound;
+pub use crate::error::{KvError, Result};
 
 pub struct KvStore {
-    storage : HashMap<String, String>,
-    log : File,
+    storage: HashMap<String, String>,
+    log: File,
 }
 
 impl KvStore {
-    pub fn open<T>(path : T) -> Result<KvStore>
-        where T: Into<std::path::PathBuf> + std::convert::AsRef<std::path::Path> {
-
+    pub fn open<T>(path: T) -> Result<KvStore>
+    where
+        T: Into<std::path::PathBuf> + std::convert::AsRef<std::path::Path>,
+    {
         let mut path = path.into();
         path.push("log.log");
         let mut file = std::fs::OpenOptions::new()
@@ -25,27 +26,28 @@ impl KvStore {
             .open(path)?;
 
         let mut buf = String::new();
-        let inner_storage =
-            if 0 != file.read_to_string(&mut buf)? {
-                serde_json::from_str(&buf)?
-            }
-            else {
-                HashMap::new()
-            };
+        let inner_storage = if 0 != file.read_to_string(&mut buf)? {
+            serde_json::from_str(&buf)?
+        } else {
+            HashMap::new()
+        };
 
-        Ok(KvStore{storage : inner_storage, log : file})
+        Ok(KvStore {
+            storage: inner_storage,
+            log: file,
+        })
     }
 
-    pub fn get(&mut self, key : String) -> Result<Option<String>> {
+    pub fn get(&mut self, key: String) -> Result<Option<String>> {
         Ok(self.storage.get(&key).cloned())
     }
 
-    pub fn set(&mut self, key : String, value : String) -> Result<()> {
+    pub fn set(&mut self, key: String, value: String) -> Result<()> {
         self.storage.insert(key, value);
         Ok(())
     }
 
-    pub fn remove(&mut self, key : String) -> Result<()> {
+    pub fn remove(&mut self, key: String) -> Result<()> {
         self.storage.remove(&key).ok_or(KeyNotFound)?;
         Ok(())
     }

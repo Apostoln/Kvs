@@ -1,7 +1,7 @@
 use std::result;
 
-use serde_json;
 use failure::Fail;
+use serde_json;
 
 #[derive(Fail, Debug)]
 pub enum KvError {
@@ -16,13 +16,13 @@ pub enum KvError {
 }
 
 impl From<std::io::Error> for KvError {
-    fn from(err : std::io::Error) -> KvError {
+    fn from(err: std::io::Error) -> KvError {
         KvError::StorageFileError(err)
     }
 }
 
 impl From<serde_json::Error> for KvError {
-    fn from(err : serde_json::Error) -> KvError {
+    fn from(err: serde_json::Error) -> KvError {
         KvError::SerdeError(err)
     }
 }
