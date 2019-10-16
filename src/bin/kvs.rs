@@ -1,12 +1,7 @@
-use std::process::exit;
 use structopt::StructOpt;
+use kvs::{KvStore, KvError};
 
-fn unimpl() {
-    eprintln!("unimplemented");
-    exit(-1);
-}
-
-#[derive(StructOpt, Debug)]
+#[derive(Debug, StructOpt)]
 #[structopt(name = "kvs")]
 enum Command {
     #[structopt(name = "set", about = "Set value and key")]
@@ -28,16 +23,22 @@ enum Command {
     }
 }
 
-fn main() {
+fn main() -> kvs::Result<()> {
+    let mut storage = KvStore::open(".")?;
+
     match Command::from_args() {
-        Command::Set {key : _, value : _} => {
-            unimpl();
+        Command::Set {key : k, value : v} => {
+            storage.set(k, v)?;
         }
-        Command::Get {key : _} => {
-            unimpl();
+        Command::Get {key : k} => {
+            println!("{}", storage.get(k)?.unwrap_or(format!("{}", KvError::KeyNotFound)));
         }
-        Command::Remove {key : _} => {
-            unimpl();
+        Command::Remove {key : k} => {
+            storage.remove(k).map_err(|err| {
+                println!("{}", err);
+                err
+            })?;
         }
     }
+    Ok(())
 }
