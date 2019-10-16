@@ -15,21 +15,23 @@ pub struct KvStore {
 impl KvStore {
     pub fn open<T>(path : T) -> Result<KvStore>
         where T: Into<std::path::PathBuf> + std::convert::AsRef<std::path::Path> {
-        //todo error handling
+
         let mut path = path.into();
         path.push("log.log");
-        let mut file = std::fs::OpenOptions::new().read(true)
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
             .write(true)
             .create(true)
             .open(path)?;
 
         let mut buf = String::new();
-        file.read_to_string(&mut buf)?;
-
-        let mut inner_storage : HashMap<String, String> = HashMap::new();
-        if !buf.is_empty() { //todo crutch?
-            inner_storage = serde_json::from_str(&buf)?;
-        }
+        let inner_storage =
+            if 0 != file.read_to_string(&mut buf)? {
+                serde_json::from_str(&buf)?
+            }
+            else {
+                HashMap::new()
+            };
 
         Ok(KvStore{storage : inner_storage, log : file})
     }
