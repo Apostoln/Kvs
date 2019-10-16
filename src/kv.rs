@@ -15,7 +15,7 @@ pub struct KvStore {
 impl KvStore {
     pub fn open<T>(path: T) -> Result<KvStore>
     where
-        T: Into<std::path::PathBuf> + std::convert::AsRef<std::path::Path>,
+        T: Into<std::path::PathBuf>
     {
         let mut path = path.into();
         path.push("log.log");
