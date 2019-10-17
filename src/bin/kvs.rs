@@ -1,3 +1,4 @@
+use std::env;
 use kvs::{KvError, KvStore};
 use structopt::StructOpt;
 
@@ -24,7 +25,7 @@ enum Command {
 }
 
 fn main() -> kvs::Result<()> {
-    let mut storage = KvStore::open(".")?;
+    let mut storage = KvStore::open(env::current_dir()?)?;
 
     match Command::from_args() {
         Command::Set { key: k, value: v } => {

@@ -7,6 +7,8 @@ use serde_json;
 use crate::error::KvError::KeyNotFound;
 pub use crate::error::{KvError, Result};
 
+const LOG_NAME : &'static str = "log.log";
+
 pub struct KvStore {
     storage: HashMap<String, String>,
     log: File,
@@ -18,7 +20,7 @@ impl KvStore {
         T: Into<std::path::PathBuf>
     {
         let mut path = path.into();
-        path.push("log.log");
+        path.push(LOG_NAME);
         let mut file = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
