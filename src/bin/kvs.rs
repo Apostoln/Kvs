@@ -4,7 +4,7 @@ use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "kvs")]
-enum Command {
+enum CliCommand {
     #[structopt(name = "set", about = "Set value and key")]
     Set {
         #[structopt(name = "KEY", required = true)]
@@ -27,14 +27,14 @@ enum Command {
 fn main() -> kvs::Result<()> {
     let mut storage = KvStore::open(env::current_dir()?)?;
 
-    match Command::from_args() {
-        Command::Set { key: k, value: v } => {
+    match CliCommand::from_args() {
+        CliCommand::Set { key: k, value: v } => {
             storage.set(k, v)?;
         }
-        Command::Get { key: k } => {
+        CliCommand::Get { key: k } => {
             println!("{}", storage.get(k)?.unwrap_or(format!("{}", KvError::KeyNotFound)));
         }
-        Command::Remove { key: k } => {
+        CliCommand::Remove { key: k } => {
             storage.remove(k).map_err(|err| {
                 println!("{}", err);
                 err

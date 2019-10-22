@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Seek, SeekFrom, Write, BufReader};
 
+use serde::{Serialize, Deserialize};
 use serde_json;
 
 use crate::error::KvError::KeyNotFound;
@@ -9,8 +10,16 @@ pub use crate::error::{KvError, Result};
 
 const LOG_NAME : &'static str = "log.log";
 
+#[derive(Serialize, Deserialize, Debug)]
+enum Command {
+    Set { key : String, value : String},
+    Remove { key : String},
+}
+
+type Offset = u64;
+
 pub struct KvStore {
-    storage: HashMap<String, String>,
+    index : HashMap<String, Offset>,
     log: File,
 }
 
@@ -21,47 +30,100 @@ impl KvStore {
     {
         let mut path = path.into();
         path.push(LOG_NAME);
-        let mut file = std::fs::OpenOptions::new()
+        let file = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
+            .append(true)
             .open(path)?;
 
-        let mut buf = String::new();
-        let inner_storage = if 0 != file.read_to_string(&mut buf)? {
-            serde_json::from_str(&buf)?
-        } else {
-            HashMap::new()
-        };
+        let mut index = HashMap::new();
+        let mut reader = BufReader::new(&file);
+        let mut pos = reader.seek(SeekFrom::Current(0))?;
+        let mut stream = serde_json::Deserializer::from_reader(reader).into_iter();
+        while let Some(item) = stream.next() {
+            match item? {
+                Command::Set {key, ..} => {
+                    index.insert(key, pos);
+                }
+                Command::Remove {key} => {
+                    index.remove(&key);
+                }
+            }
+            pos = stream.byte_offset() as u64;
+        }
 
-        Ok(KvStore {
-            storage: inner_storage,
-            log: file,
-        })
+        Ok(KvStore{index, log: file})
     }
 
     pub fn get(&mut self, key: String) -> Result<Option<String>> {
-        Ok(self.storage.get(&key).cloned())
+        self.index.get(&key).map_or(
+            Ok(None),
+            |offset| {
+                //todo move to function?
+                let mut reader = BufReader::new(&self.log);
+                reader.seek(SeekFrom::Start(*offset))?;
+                if let Command::Set {value, ..} = serde_json::Deserializer::from_reader(reader)
+                    .into_iter()
+                    .next()
+                    .unwrap()? {
+                    Ok(Some(value))
+                }
+                else {
+                    Err(KvError::UnknownError("Expected `Set` record".to_string()))
+                }
+            })
     }
 
     pub fn set(&mut self, key: String, value: String) -> Result<()> {
-        self.storage.insert(key, value);
+        let pos = self.log.seek(SeekFrom::Current(0))?;
+
+        let cmd = Command::Set{key: key.clone(), value };
+        let command_record = serde_json::to_string(&cmd)?;
+        self.log.write(command_record.as_bytes())?;
+
+        self.index.insert(key, pos);
         Ok(())
     }
 
     pub fn remove(&mut self, key: String) -> Result<()> {
-        self.storage.remove(&key).ok_or(KeyNotFound)?;
+        self.index.remove(&key).ok_or(KeyNotFound)?;
+
+        let cmd = Command::Remove {key};
+        let command_record = serde_json::to_string(&cmd)?;
+        self.log.write(command_record.as_bytes())?;
+
         Ok(())
     }
 
     fn save(&mut self) -> Result<()> {
-        // Clear storage file
+        let commands : Vec<_> = self.index
+            .values()
+            .map(|offset| -> Result<Command> {
+                let mut reader = BufReader::new(&self.log);
+                reader.seek(SeekFrom::Start(*offset))?;
+
+                if let Command::Set {key, value} = serde_json::Deserializer::from_reader(reader)
+                    .into_iter()
+                    .next()
+                    .unwrap()? {
+                    Ok(Command::Set {key, value})
+                }
+                else {
+                    unreachable!()
+                }
+            })
+            .collect();
+
+        // Clear log file
         self.log.set_len(0)?;
         self.log.seek(SeekFrom::Start(0))?;
 
-        // Write new content
-        let content = serde_json::to_string(&self.storage)?;
-        self.log.write_all(content.as_bytes())?;
+        for cmd in commands {
+            let command_record = serde_json::to_string(&cmd?)?;
+            self.log.write(command_record.as_bytes())?;
+        }
+
         Ok(())
     }
 }

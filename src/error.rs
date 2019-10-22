@@ -13,6 +13,9 @@ pub enum KvError {
 
     #[fail(display = "{}", _0)]
     SerdeError(#[cause] serde_json::Error),
+
+    #[fail(display = "{}", _0)]
+    UnknownError(String)
 }
 
 impl From<std::io::Error> for KvError {
@@ -24,6 +27,12 @@ impl From<std::io::Error> for KvError {
 impl From<serde_json::Error> for KvError {
     fn from(err: serde_json::Error) -> KvError {
         KvError::SerdeError(err)
+    }
+}
+
+impl From<String> for KvError {
+    fn from(err: String) -> KvError {
+        KvError::UnknownError(err)
     }
 }
 
