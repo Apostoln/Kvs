@@ -14,6 +14,9 @@ pub enum KvError {
     #[fail(display = "{}", _0)]
     SerdeError(#[cause] serde_json::Error),
 
+    #[fail(display = "Unexpected command")]
+    UnexpectedCommand,
+
     #[fail(display = "{}", _0)]
     UnknownError(String)
 }
