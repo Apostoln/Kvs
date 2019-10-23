@@ -22,7 +22,7 @@ type Offset = u64;
 pub struct KvStore {
     index : HashMap<String, Offset>,
     log: File,
-    unused_records : u64,
+    unused_records: u64,
 }
 
 impl KvStore {
@@ -39,7 +39,7 @@ impl KvStore {
             .append(true)
             .open(path)?;
 
-        let index = KvStore::load(&mut file)?;
+        let index = KvStore::index(&mut file)?;
 
         Ok(KvStore{index, log: file, unused_records: 0})
     }
@@ -71,8 +71,8 @@ impl KvStore {
 
         if self.unused_records > RECORDS_LIMIT {
             //todo save old copy
-            self.save()?;
-            self.index = KvStore::load(&mut self.log)?;
+            self.compact()?;
+            self.index = KvStore::index(&mut self.log)?;
             self.unused_records = 0;
         }
 
@@ -90,8 +90,7 @@ impl KvStore {
         Ok(())
     }
 
-    //todo rename
-    fn load(file: &mut File) -> Result<HashMap<String, u64>> {
+    fn index(file: &mut File) -> Result<HashMap<String, u64>> {
         let mut index = HashMap::new();
 
         file.seek(SeekFrom::Start(0))?;
@@ -112,6 +111,16 @@ impl KvStore {
         Ok(index)
     }
 
+    fn compact(&mut self) -> Result<()> {
+        let commands = self.read_actual_commands();
+
+        // Clear log file
+        self.log.set_len(0)?;
+        self.log.seek(SeekFrom::Start(0))?;
+
+        self.write_actual_commands(commands)
+    }
+
     fn read_command(&self, offset: u64)-> Result<Command> {
         let mut reader = BufReader::new(&self.log);
         reader.seek(SeekFrom::Start(offset))?;
@@ -122,9 +131,8 @@ impl KvStore {
             .unwrap()?)
     }
 
-    fn save(&mut self) -> Result<()> {
-        //todo rename and refact
-        let commands : Vec<_> = self.index
+    fn read_actual_commands(&self) -> Vec<Result<Command>> {
+        self.index
             .values()
             .map(|offset| -> Result<Command> {
                 match self.read_command(*offset)? {
@@ -132,24 +140,21 @@ impl KvStore {
                     _ => Err(UnexpectedCommand),
                 }
             })
-            .collect();
+            .collect()
+    }
 
-        // Clear log file
-        self.log.set_len(0)?;
-        self.log.seek(SeekFrom::Start(0))?;
-
+    fn write_actual_commands(&mut self, commands: Vec<Result<Command>>) -> Result<()> {
         for cmd in commands {
             let command_record = serde_json::to_string(&cmd?)?;
             self.log.write(command_record.as_bytes())?;
         }
-
         Ok(())
     }
 }
 
 impl Drop for KvStore {
     fn drop(&mut self) {
-        if let Err(e) = self.save() {
+        if let Err(e) = self.compact() {
             panic!("{}", e);
         }
     }
