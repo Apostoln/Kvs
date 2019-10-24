@@ -38,8 +38,7 @@ impl KvStore {
             .create(true)
             .append(true)
             .open(path)?;
-
-        let index = KvStore::index(&mut file)?;
+        let index = KvStore::index(&mut BufReader::new(&file))?;
 
         Ok(KvStore{index, log: file, unused_records: 0})
     }
@@ -70,9 +69,8 @@ impl KvStore {
         }
 
         if self.unused_records > RECORDS_LIMIT {
-            //todo save old copy
             self.compact()?;
-            self.index = KvStore::index(&mut self.log)?;
+            self.reindex()?;
             self.unused_records = 0;
         }
 
@@ -90,12 +88,14 @@ impl KvStore {
         Ok(())
     }
 
-    fn index(file: &mut File) -> Result<HashMap<String, u64>> {
-        let mut index = HashMap::new();
+    fn reindex(&mut self) -> Result<()> {
+        self.index = KvStore::index(&mut BufReader::new(&self.log))?;
+        Ok(())
+    }
 
-        file.seek(SeekFrom::Start(0))?;
-        let mut reader = BufReader::new(file);
-        let mut pos = reader.seek(SeekFrom::Current(0))?;
+    fn index(reader: &mut BufReader<&File>) -> Result<HashMap<String, u64>> {
+        let mut index = HashMap::new();
+        let mut pos = reader.seek(SeekFrom::Start(0))?;
         let mut stream = serde_json::Deserializer::from_reader(reader).into_iter();
         while let Some(item) = stream.next() {
             match item? {
