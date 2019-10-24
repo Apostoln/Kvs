@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{Seek, SeekFrom, Write, BufReader};
+use std::io::{Seek, SeekFrom, Write, BufReader, BufWriter};
 
 use serde::{Serialize, Deserialize};
 use serde_json;
@@ -58,11 +58,11 @@ impl KvStore {
     }
 
     pub fn set(&mut self, key: String, value: String) -> Result<()> {
-        let pos = self.log.seek(SeekFrom::Current(0))?;
 
         let cmd = Command::Set{key: key.clone(), value };
-        let command_record = serde_json::to_string(&cmd)?;
-        self.log.write(command_record.as_bytes())?;
+        let mut writer = BufWriter::new(&self.log);
+        let pos = writer.seek(SeekFrom::Current(0))?;
+        serde_json::to_writer(writer, &cmd)?;
 
         if let Some(_) = self.index.insert(key, pos) {
             self.unused_records += 1;
@@ -81,8 +81,8 @@ impl KvStore {
         self.index.remove(&key).ok_or(KeyNotFound)?;
 
         let cmd = Command::Remove {key};
-        let command_record = serde_json::to_string(&cmd)?;
-        self.log.write(command_record.as_bytes())?;
+        let mut writer = BufWriter::new(&self.log);
+        serde_json::to_writer(writer, &cmd)?;
 
         self.unused_records += 1;
         Ok(())
@@ -143,10 +143,12 @@ impl KvStore {
             .collect()
     }
 
+    //todo refact to combinators?
+    //todo make sure commands actual?
     fn write_actual_commands(&mut self, commands: Vec<Result<Command>>) -> Result<()> {
+        let mut writer = BufWriter::new(&self.log);
         for cmd in commands {
-            let command_record = serde_json::to_string(&cmd?)?;
-            self.log.write(command_record.as_bytes())?;
+            serde_json::to_writer(&mut writer, &cmd?)?;
         }
         Ok(())
     }
