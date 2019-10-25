@@ -1,13 +1,13 @@
 use std::collections::HashMap;
-use std::fs::{File, read};
+use std::fs::File;
 use std::io::{Seek, SeekFrom, Write, BufReader, BufWriter};
+use std::path::PathBuf;
 
 use serde::{Serialize, Deserialize};
 use serde_json;
 
-use crate::error::KvError::{KeyNotFound, UnexpectedCommand, SerdeError};
+use crate::error::KvError::{KeyNotFound, UnexpectedCommand};
 pub use crate::error::{KvError, Result};
-use std::path::PathBuf;
 
 const LOG_NAME : &'static str = "log.log";
 const RECORDS_LIMIT : u64 = 100;
@@ -19,6 +19,7 @@ enum Command {
 }
 
 type Offset = u64;
+type Index = HashMap<String, Offset>;
 
 pub struct Log {
     reader: BufReader<File>,
@@ -30,26 +31,24 @@ impl Log {
     where
         T: Into<std::path::PathBuf>
     {
-        let mut file = std::fs::OpenOptions::new()
+        let file = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .append(true)
             .open(path.into())?;
-        let mut reader = BufReader::new(file.try_clone()?);
-        let mut writer = BufWriter::new(file.try_clone()?);
+        let reader = BufReader::new(file.try_clone()?);
+        let writer = BufWriter::new(file.try_clone()?);
         Ok(Log{reader, writer})
     }
 }
 
 pub struct KvStore {
-    index: HashMap<String, Offset>,
+    index: Index,
     log: Log,
     path: PathBuf,
     unused_records: u64,
 }
-
-
 
 impl KvStore {
     pub fn open<T>(path: T) -> Result<KvStore>
@@ -106,7 +105,7 @@ impl KvStore {
         let cmd = Command::Remove {key};
 
         serde_json::to_writer(&mut self.log.writer, &cmd)?;
-        self.log.writer.flush();
+        self.log.writer.flush()?;
 
         self.unused_records += 1;
         Ok(())
@@ -117,24 +116,6 @@ impl KvStore {
         Ok(())
     }
 
-    fn index(reader: &mut BufReader<File>) -> Result<HashMap<String, u64>> {
-        let mut index = HashMap::new();
-        let mut pos = reader.seek(SeekFrom::Start(0))?;
-        let mut stream = serde_json::Deserializer::from_reader(reader).into_iter();
-        while let Some(item) = stream.next() {
-            match item? {
-                Command::Set {key, ..} => {
-                    index.insert(key, pos);
-                }
-                Command::Remove {key} => {
-                    index.remove(&key).unwrap();
-                }
-            }
-            pos = stream.byte_offset() as u64;
-        }
-        Ok(index)
-    }
-
     fn compact(&mut self) -> Result<()> {
         let commands = self.read_actual_commands();
 
@@ -143,15 +124,6 @@ impl KvStore {
         self.log = Log::new(&self.path)?;
 
         self.write_actual_commands(commands)
-    }
-
-    fn read_command(mut reader: &mut BufReader<File>, offset: u64)-> Result<Command> {
-        reader.seek(SeekFrom::Start(offset))?;
-
-        Ok(serde_json::Deserializer::from_reader(&mut reader)
-            .into_iter()
-            .next()
-            .unwrap()?)
     }
 
     fn read_actual_commands(&mut self) -> Vec<Result<Command>> {
@@ -174,6 +146,33 @@ impl KvStore {
         }
         self.log.writer.flush()?;
         Ok(())
+    }
+
+    fn index(reader: &mut BufReader<File>) -> Result<Index> {
+        let mut index = Index::new();
+        let mut pos = reader.seek(SeekFrom::Start(0))?;
+        let mut stream = serde_json::Deserializer::from_reader(reader).into_iter();
+        while let Some(item) = stream.next() {
+            match item? {
+                Command::Set {key, ..} => {
+                    index.insert(key, pos);
+                }
+                Command::Remove {key} => {
+                    index.remove(&key).unwrap();
+                }
+            }
+            pos = stream.byte_offset() as u64;
+        }
+        Ok(index)
+    }
+
+    fn read_command(mut reader: &mut BufReader<File>, offset: u64)-> Result<Command> {
+        reader.seek(SeekFrom::Start(offset))?;
+
+        Ok(serde_json::Deserializer::from_reader(&mut reader)
+            .into_iter()
+            .next()
+            .unwrap()?)
     }
 }
 
