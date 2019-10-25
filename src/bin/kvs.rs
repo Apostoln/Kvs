@@ -1,5 +1,5 @@
-use std::env;
 use kvs::{KvError, KvStore};
+use std::env;
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -32,7 +32,12 @@ fn main() -> kvs::Result<()> {
             storage.set(k, v)?;
         }
         CliCommand::Get { key: k } => {
-            println!("{}", storage.get(k)?.unwrap_or(format!("{}", KvError::KeyNotFound)));
+            println!(
+                "{}",
+                storage
+                    .get(k)?
+                    .unwrap_or(format!("{}", KvError::KeyNotFound))
+            );
         }
         CliCommand::Remove { key: k } => {
             storage.remove(k).map_err(|err| {

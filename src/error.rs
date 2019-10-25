@@ -18,7 +18,7 @@ pub enum KvError {
     UnexpectedCommand,
 
     #[fail(display = "{}", _0)]
-    UnknownError(String)
+    UnknownError(String),
 }
 
 impl From<std::io::Error> for KvError {

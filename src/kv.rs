@@ -1,21 +1,21 @@
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{Seek, SeekFrom, Write, BufReader, BufWriter};
+use std::io::{BufReader, BufWriter, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use serde_json;
 
 use crate::error::KvError::{KeyNotFound, UnexpectedCommand};
 pub use crate::error::{KvError, Result};
 
-const LOG_NAME : &'static str = "log.log";
-const RECORDS_LIMIT : u64 = 100;
+const LOG_NAME: &'static str = "log.log";
+const RECORDS_LIMIT: u64 = 100;
 
 #[derive(Serialize, Deserialize, Debug)]
 enum Command {
-    Set { key : String, value : String},
-    Remove { key : String},
+    Set { key: String, value: String },
+    Remove { key: String },
 }
 
 type Offset = u64;
@@ -29,7 +29,7 @@ pub struct Log {
 impl Log {
     fn new<T>(path: T) -> Result<Log>
     where
-        T: Into<std::path::PathBuf>
+        T: Into<std::path::PathBuf>,
     {
         let file = std::fs::OpenOptions::new()
             .read(true)
@@ -39,7 +39,7 @@ impl Log {
             .open(path.into())?;
         let reader = BufReader::new(file.try_clone()?);
         let writer = BufWriter::new(file.try_clone()?);
-        Ok(Log{reader, writer})
+        Ok(Log { reader, writer })
     }
 }
 
@@ -53,14 +53,19 @@ pub struct KvStore {
 impl KvStore {
     pub fn open<T>(path: T) -> Result<KvStore>
     where
-        T: Into<std::path::PathBuf>
+        T: Into<std::path::PathBuf>,
     {
         let mut path = path.into();
         path.push(LOG_NAME);
         let mut log = Log::new(&path)?;
         let index = KvStore::index(&mut log.reader)?;
 
-        Ok(KvStore{index, log, path, unused_records: 0})
+        Ok(KvStore {
+            index,
+            log,
+            path,
+            unused_records: 0,
+        })
     }
 
     pub fn get(&mut self, key: String) -> Result<Option<String>> {
@@ -71,8 +76,8 @@ impl KvStore {
                 Ok(None),
                 |offset| {
                     match KvStore::read_command(reader, *offset)? {
-                        Command::Set {value, ..} => Ok(Some(value)),
-                        Command::Remove {..} => Err(UnexpectedCommand),
+                        Command::Set { value, .. } => Ok(Some(value)),
+                        Command::Remove { .. } => Err(UnexpectedCommand),
                     }
                 }
             )
@@ -81,7 +86,7 @@ impl KvStore {
     pub fn set(&mut self, key: String, value: String) -> Result<()> {
         let pos = self.log.writer.seek(SeekFrom::Current(0))?;
 
-        let cmd = Command::Set{key: key.clone(), value };
+        let cmd = Command::Set { key: key.clone(), value };
 
         serde_json::to_writer(&mut self.log.writer, &cmd)?;
         self.log.writer.flush()?;
@@ -102,7 +107,7 @@ impl KvStore {
     pub fn remove(&mut self, key: String) -> Result<()> {
         self.index.remove(&key).ok_or(KeyNotFound)?;
 
-        let cmd = Command::Remove {key};
+        let cmd = Command::Remove { key };
 
         serde_json::to_writer(&mut self.log.writer, &cmd)?;
         self.log.writer.flush()?;
@@ -132,7 +137,7 @@ impl KvStore {
             .values()
             .map(|offset| -> Result<Command> {
                 match KvStore::read_command(reader, *offset)? {
-                    Command::Set {key, value} => Ok(Command::Set {key, value}),
+                    Command::Set { key, value } => Ok(Command::Set { key, value }),
                     _ => Err(UnexpectedCommand),
                 }
             })
@@ -154,10 +159,10 @@ impl KvStore {
         let mut stream = serde_json::Deserializer::from_reader(reader).into_iter();
         while let Some(item) = stream.next() {
             match item? {
-                Command::Set {key, ..} => {
+                Command::Set { key, .. } => {
                     index.insert(key, pos);
                 }
-                Command::Remove {key} => {
+                Command::Remove { key } => {
                     index.remove(&key).unwrap();
                 }
             }
@@ -166,7 +171,7 @@ impl KvStore {
         Ok(index)
     }
 
-    fn read_command(mut reader: &mut BufReader<File>, offset: u64)-> Result<Command> {
+    fn read_command(mut reader: &mut BufReader<File>, offset: u64) -> Result<Command> {
         reader.seek(SeekFrom::Start(offset))?;
 
         Ok(serde_json::Deserializer::from_reader(&mut reader)
