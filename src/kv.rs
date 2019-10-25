@@ -20,13 +20,36 @@ enum Command {
 
 type Offset = u64;
 
-pub struct KvStore {
-    index: HashMap<String, Offset>,
+pub struct Log {
     reader: BufReader<File>,
     writer: BufWriter<File>,
+}
+
+impl Log {
+    fn new<T>(path: T) -> Result<Log>
+    where
+        T: Into<std::path::PathBuf>
+    {
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .append(true)
+            .open(path.into())?;
+        let mut reader = BufReader::new(file.try_clone()?);
+        let mut writer = BufWriter::new(file.try_clone()?);
+        Ok(Log{reader, writer})
+    }
+}
+
+pub struct KvStore {
+    index: HashMap<String, Offset>,
+    log: Log,
     path: PathBuf,
     unused_records: u64,
 }
+
+
 
 impl KvStore {
     pub fn open<T>(path: T) -> Result<KvStore>
@@ -35,23 +58,14 @@ impl KvStore {
     {
         let mut path = path.into();
         path.push(LOG_NAME);
-        let mut file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .append(true)
-            .open(&path)?;
+        let mut log = Log::new(&path)?;
+        let index = KvStore::index(&mut log.reader)?;
 
-        let mut reader = BufReader::new(file.try_clone()?);
-        let mut writer = BufWriter::new(file.try_clone()?);
-
-        let index = KvStore::index(&mut reader)?;
-
-        Ok(KvStore{index, reader, writer, path, unused_records: 0})
+        Ok(KvStore{index, log, path, unused_records: 0})
     }
 
     pub fn get(&mut self, key: String) -> Result<Option<String>> {
-        let reader = &mut self.reader;
+        let reader = &mut self.log.reader;
         self.index
             .get(&key)
             .map_or(
@@ -66,12 +80,12 @@ impl KvStore {
     }
 
     pub fn set(&mut self, key: String, value: String) -> Result<()> {
-        let pos = self.writer.seek(SeekFrom::Current(0))?;
+        let pos = self.log.writer.seek(SeekFrom::Current(0))?;
 
         let cmd = Command::Set{key: key.clone(), value };
 
-        serde_json::to_writer(&mut self.writer, &cmd)?;
-        self.writer.flush()?;
+        serde_json::to_writer(&mut self.log.writer, &cmd)?;
+        self.log.writer.flush()?;
 
         if let Some(_) = self.index.insert(key, pos) {
             self.unused_records += 1;
@@ -91,15 +105,15 @@ impl KvStore {
 
         let cmd = Command::Remove {key};
 
-        serde_json::to_writer(&mut self.writer, &cmd)?;
-        self.writer.flush();
+        serde_json::to_writer(&mut self.log.writer, &cmd)?;
+        self.log.writer.flush();
 
         self.unused_records += 1;
         Ok(())
     }
 
     fn reindex(&mut self) -> Result<()> {
-        self.index = KvStore::index(&mut self.reader)?;
+        self.index = KvStore::index(&mut self.log.reader)?;
         Ok(())
     }
 
@@ -126,26 +140,9 @@ impl KvStore {
 
         // Clear log file
         std::fs::remove_file(&self.path)?;
-        let log = KvStore::create_log(&self.path)?;
-        self.reader = log.0;
-        self.writer = log.1;
+        self.log = Log::new(&self.path)?;
 
         self.write_actual_commands(commands)
-    }
-
-    fn create_log<T>(path: T) -> Result<(BufReader<File>, BufWriter<File>)>
-    where
-        T: Into<std::path::PathBuf>
-    {
-        let mut file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .append(true)
-            .open(path.into())?;
-        let mut reader = BufReader::new(file.try_clone()?);
-        let mut writer = BufWriter::new(file.try_clone()?);
-        Ok((reader, writer))
     }
 
     fn read_command(mut reader: &mut BufReader<File>, offset: u64)-> Result<Command> {
@@ -158,7 +155,7 @@ impl KvStore {
     }
 
     fn read_actual_commands(&mut self) -> Vec<Result<Command>> {
-        let reader = &mut self.reader;
+        let reader = &mut self.log.reader;
         self.index
             .values()
             .map(|offset| -> Result<Command> {
@@ -173,9 +170,9 @@ impl KvStore {
     //todo make sure commands actual?
     fn write_actual_commands(&mut self, commands: Vec<Result<Command>>) -> Result<()> {
         for cmd in commands {
-            serde_json::to_writer(&mut self.writer, &cmd?)?;
+            serde_json::to_writer(&mut self.log.writer, &cmd?)?;
         }
-        self.writer.flush()?;
+        self.log.writer.flush()?;
         Ok(())
     }
 }
