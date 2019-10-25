@@ -7,6 +7,7 @@ use serde_json;
 
 use crate::error::KvError::{KeyNotFound, UnexpectedCommand, SerdeError};
 pub use crate::error::{KvError, Result};
+use std::path::PathBuf;
 
 const LOG_NAME : &'static str = "log.log";
 const RECORDS_LIMIT : u64 = 100;
@@ -23,7 +24,7 @@ pub struct KvStore {
     index: HashMap<String, Offset>,
     reader: BufReader<File>,
     writer: BufWriter<File>,
-    log: File,
+    path: PathBuf,
     unused_records: u64,
 }
 
@@ -39,14 +40,14 @@ impl KvStore {
             .write(true)
             .create(true)
             .append(true)
-            .open(path)?;
+            .open(&path)?;
 
         let mut reader = BufReader::new(file.try_clone()?);
         let mut writer = BufWriter::new(file.try_clone()?);
 
         let index = KvStore::index(&mut reader)?;
 
-        Ok(KvStore{index, reader, writer, log: file, unused_records: 0})
+        Ok(KvStore{index, reader, writer, path, unused_records: 0})
     }
 
     pub fn get(&mut self, key: String) -> Result<Option<String>> {
@@ -124,11 +125,27 @@ impl KvStore {
         let commands = self.read_actual_commands();
 
         // Clear log file
-        // todo remove log-file usage
-        self.log.set_len(0)?;
-        self.log.seek(SeekFrom::Start(0))?;
+        std::fs::remove_file(&self.path)?;
+        let log = KvStore::create_log(&self.path)?;
+        self.reader = log.0;
+        self.writer = log.1;
 
         self.write_actual_commands(commands)
+    }
+
+    fn create_log<T>(path: T) -> Result<(BufReader<File>, BufWriter<File>)>
+    where
+        T: Into<std::path::PathBuf>
+    {
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .append(true)
+            .open(path.into())?;
+        let mut reader = BufReader::new(file.try_clone()?);
+        let mut writer = BufWriter::new(file.try_clone()?);
+        Ok((reader, writer))
     }
 
     fn read_command(mut reader: &mut BufReader<File>, offset: u64)-> Result<Command> {
