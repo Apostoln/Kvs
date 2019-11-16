@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::fs::File;
+use std::fs::{File, DirEntry};
+use std::fs;
 use std::io::{Seek, SeekFrom, Write, BufReader, BufWriter};
 use std::path::PathBuf;
 
@@ -8,8 +9,14 @@ use serde_json;
 
 use crate::error::KvError::{KeyNotFound, UnexpectedCommand};
 pub use crate::error::{KvError, Result};
+use std::ffi::OsStr;
+use std::os::unix::ffi::OsStrExt;
+use failure::Fail;
 
 const LOG_NAME : &'static str = "log.log";
+const ACTIVE_FILE_NAME: &'static str = "log.active";
+const ACTIVE_EXT : &'static str = "active";
+const PASSIVE_EXT : &'static str = "passive";
 const RECORDS_LIMIT : u64 = 100;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -21,25 +28,119 @@ enum Command {
 type Offset = u64;
 type Index = HashMap<String, Offset>;
 
+/*
 pub struct Log {
+    reader: BufReader<File>,
+    writer: BufWriter<File>,
+}*/
+
+
+
+enum DataFile {
+    Active(ActiveFile),
+    Passive(PassiveFile),
+}
+
+#[derive(Debug)]
+struct PassiveFile {
+    path: PathBuf,
+    reader: BufReader<File>,
+}
+
+impl PassiveFile {
+    fn new<T>(path: T) -> Result<PassiveFile>
+        where
+            T: Into<std::path::PathBuf>
+    {
+        let path= path.into();
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .open(path.clone())?; //todo avoid cloning?
+        let reader = BufReader::new(file);
+        Ok(PassiveFile{path, reader})
+    }
+}
+
+#[derive(Debug)]
+struct ActiveFile {
+    path: PathBuf,
     reader: BufReader<File>,
     writer: BufWriter<File>,
 }
 
-impl Log {
-    fn new<T>(path: T) -> Result<Log>
-    where
-        T: Into<std::path::PathBuf>
+impl ActiveFile {
+    fn new<T>(path: T) -> Result<ActiveFile>
+        where
+            T: Into<std::path::PathBuf>
     {
+        let path = path.into();
         let file = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .append(true)
-            .open(path.into())?;
+            .open(path.clone())?; //todo avoid cloning
+        let reader = BufReader::new(file.try_clone()?);
+        let writer = BufWriter::new(file.try_clone()?);
+
+        Ok(ActiveFile{path, reader, writer})
+    }
+}
+
+pub struct Log {
+
+    active: ActiveFile,
+    passive: Vec<PassiveFile>,
+
+    /*
+    reader: BufReader<File>,
+    writer: BufWriter<File>,
+    */
+}
+
+impl Log {
+    fn new<T>(dir_path: T) -> Result<Log>
+    where
+        T: Into<std::path::PathBuf>
+    {
+        let dir_path = dir_path.into();
+        let mut passive_files = dir_path.read_dir()?
+            .filter_map(std::result::Result::ok)
+            .map(|file| file.path())
+            .filter(|path| path.is_file())
+            .filter(|path| {
+                if let Some(ext) = path.extension() {
+                    ext == PASSIVE_EXT
+                } else {
+                    false
+                }})
+            .collect::<Vec<PathBuf>>();
+        passive_files.sort(); // todo what if some of names are not numbers?
+        let passive_files = passive_files
+            .iter()
+            .map(PassiveFile::new)
+            .collect::<Result<Vec<PassiveFile>>>()?;
+
+        let mut active_file_path = dir_path.clone();
+        active_file_path.push(ACTIVE_FILE_NAME);
+        let active_file = ActiveFile::new(active_file_path)?;
+
+
+        println!("{:?}", passive_files);
+        println!("{:?}", active_file);
+
+/*
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .append(true)
+            .open(dir_path)?;
         let reader = BufReader::new(file.try_clone()?);
         let writer = BufWriter::new(file.try_clone()?);
         Ok(Log{reader, writer})
+        */
+        Ok(Log{active: active_file, passive: passive_files})
     }
 }
 
@@ -56,7 +157,7 @@ impl KvStore {
         T: Into<std::path::PathBuf>
     {
         let mut path = path.into();
-        path.push(LOG_NAME);
+        //path.push(LOG_NAME);
         let mut log = Log::new(&path)?;
         let index = KvStore::index(&mut log.reader)?;
 
