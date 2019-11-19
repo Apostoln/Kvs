@@ -13,14 +13,17 @@ use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 use failure::Fail;
 use serde_json::error::Category::Data;
+use std::time::UNIX_EPOCH;
+use std::os::raw::c_uint;
 
 const LOG_NAME : &'static str = "log.log";
 const ACTIVE_FILE_NAME: &'static str = "log.active";
 const ACTIVE_EXT : &'static str = "active";
 const PASSIVE_EXT : &'static str = "passive";
 const RECORDS_LIMIT : u64 = 100;
+const RECORDS_IN_COMPACTED: usize = 100;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 enum Command {
     Set { key : String, value : String},
     Remove { key : String},
@@ -140,7 +143,7 @@ impl Log {
     }
 }
 
-//todo refact LogPointer with reference to file?
+//todo refact LogPointer with direct reference to file instead of PathBuf?
 /*
 struct LogPointer<'a> {
     offset: u64,
@@ -198,14 +201,13 @@ impl KvStore {
         if let Some(_) = self.index.insert(key, LogPointer{file: self.log.active.path.clone(), offset: pos }) { //avoid cloning?
             self.unused_records += 1;
         }
-        //todo do
-/*
+
         if self.unused_records > RECORDS_LIMIT {
             self.compact()?;
             self.reindex()?;
             self.unused_records = 0;
         }
-*/
+
         Ok(())
     }
 
@@ -228,23 +230,48 @@ impl KvStore {
         Ok(())
     }
 
-    /*
+
     fn compact(&mut self) -> Result<()> {
+        // Create backup
+        let mut backup_dir = self.path.clone();
+        let time = std::time::SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        backup_dir.push(format!("precompact_backup_{0}", time));
+        self.backup(&backup_dir);
+
+        // Read actual commands
         let commands = self.read_actual_commands();
 
-        // Clear log file
-        std::fs::remove_file(&self.path)?;
+        // Remove current passive files
+        for passive in &mut self.log.passive {
+            std::fs::remove_file(&mut passive.path)?;
+        }
+
+        // Create new passive files and write actual commands to them, then recreate struct Log
+        self.write_actual_commands(commands)?;
         self.log = Log::new(&self.path)?;
 
-        self.write_actual_commands(commands)
+        Ok(())
+    }
+
+    fn backup(&mut self, mut backup_dir: &PathBuf) -> Result<()> {
+        fs::create_dir(&mut backup_dir)?;
+        for passive in &self.log.passive {
+            let mut new_file = backup_dir.clone();
+            new_file.push(passive.path.file_name().unwrap());
+            fs::copy(&passive.path, new_file)?;
+        }
+        Ok(())
     }
 
     fn read_actual_commands(&mut self) -> Vec<Result<Command>> {
-        let reader = &mut self.log.reader;
+        let log = &mut self.log;
         self.index
             .values()
-            .map(|offset| -> Result<Command> {
-                match KvStore::read_command(reader, *offset)? {
+            .map(|log_ptr| -> Result<Command> {
+                match KvStore::read_command(log, log_ptr)? {
                     Command::Set {key, value} => Ok(Command::Set {key, value}),
                     _ => Err(UnexpectedCommand),
                 }
@@ -252,15 +279,35 @@ impl KvStore {
             .collect()
     }
 
-    //todo make sure commands actual?
-    fn write_actual_commands(&mut self, commands: Vec<Result<Command>>) -> Result<()> {
-        for cmd in commands {
-            serde_json::to_writer(&mut self.log.writer, &cmd?)?;
-        }
-        self.log.writer.flush()?;
-        Ok(())
-    }*/
+    fn write_actual_commands(&mut self, mut commands: Vec<Result<Command>>) -> Result<()> {
+        //todo move creating files to other function?
+        //todo create PassiveFile's directly here?
+        let mut counter: u64 = 1;
 
+        // Separate commands to chunks with RECORDS_IN_COMPACTED elements and write
+        // each chunk to new passive file.
+        let commands = &mut commands;
+        while !commands.is_empty() {
+            // Create new file
+            let mut path = self.path.clone();
+            path.push(format!("{}.{}", counter, PASSIVE_EXT));
+            let file = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .append(true)
+                .open(path)?;
+            let mut writer = BufWriter::new(file);
+
+            // Take chunk with RECORDS_IN_COMPACTED from commands and write its content
+            for cmd in std::iter::from_fn(|| commands.pop()).take(RECORDS_IN_COMPACTED) {
+                serde_json::to_writer(&mut writer, &cmd?)?;
+            }
+            writer.flush()?;
+
+            counter += 1;
+        }
+        Ok(())
+    }
 
     fn index_datafile<T>(index: &mut Index, datafile: &mut T) -> Result<()>
         where T: DataFileGetter
@@ -321,13 +368,10 @@ impl KvStore {
     }
 }
 
-
 impl Drop for KvStore {
     fn drop(&mut self) {
-/*
         if let Err(e) = self.compact() {
             panic!("{}", e);
         }
-*/
     }
 }
