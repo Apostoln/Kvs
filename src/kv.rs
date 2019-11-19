@@ -16,7 +16,7 @@ use serde_json::error::Category::Data;
 use std::time::UNIX_EPOCH;
 use std::os::raw::c_uint;
 
-const LOG_NAME : &'static str = "log.log";
+// todo rm const LOG_NAME : &'static str = "log.log";
 const ACTIVE_FILE_NAME: &'static str = "log.active";
 const ACTIVE_EXT : &'static str = "active";
 const PASSIVE_EXT : &'static str = "passive";
@@ -141,6 +141,8 @@ impl Log {
 
         Ok(Log{active: active_file, passive: passive_files})
     }
+
+
 }
 
 //todo refact LogPointer with direct reference to file instead of PathBuf?
@@ -232,6 +234,10 @@ impl KvStore {
 
 
     fn compact(&mut self) -> Result<()> {
+        //todo needed?
+        self.dump()?;
+        self.reindex(); //todo rly here?
+
         // Create backup
         let mut backup_dir = self.path.clone();
         let time = std::time::SystemTime::now()
@@ -239,7 +245,7 @@ impl KvStore {
             .unwrap()
             .as_secs();
         backup_dir.push(format!("precompact_backup_{0}", time));
-        self.backup(&backup_dir);
+        self.backup(&backup_dir)?;
 
         // Read actual commands
         let commands = self.read_actual_commands();
@@ -366,6 +372,31 @@ impl KvStore {
             .next()
             .unwrap()?)
     }
+
+    fn dump(&mut self) -> Result<()> {
+        // todo Move this to Log:: methods
+
+        // Rename current ACTIVE_FILE_NAME to serial_number.passive
+        let serial_number = self.log
+            .passive
+            .last()
+            .map_or(0, |file| {
+                file.path
+                    .file_stem().unwrap()
+                    .to_str().unwrap()
+                    .parse::<i32>().unwrap() //todo error handling
+            })
+            + 1;
+        let mut new_path = self.path.clone();
+        new_path.push(format!("{}.{}", serial_number, PASSIVE_EXT));
+        fs::rename(&self.log.active.path, &mut new_path);
+
+        // Move old active file to passives and create new active
+        self.log.passive.push(PassiveFile::new(new_path)?);
+        self.log.active = ActiveFile::new(ACTIVE_FILE_NAME)?;
+        Ok(())
+    }
+
 }
 
 impl Drop for KvStore {
