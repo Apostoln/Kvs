@@ -1,22 +1,15 @@
 use std::collections::HashMap;
-use std::fs::{File, DirEntry};
+use std::fs::File;
 use std::fs;
-use std::io::{Seek, SeekFrom, Write, BufReader, BufWriter, BufRead};
-use std::path::{PathBuf, Path};
+use std::io::{Seek, SeekFrom, Write, BufReader, BufWriter};
+use std::path::PathBuf;
 
 use serde::{Serialize, Deserialize};
 use serde_json;
 
 use crate::error::KvError::{KeyNotFound, UnexpectedCommand};
 pub use crate::error::{KvError, Result};
-use std::ffi::OsStr;
-use std::os::unix::ffi::OsStrExt;
-use failure::{Fail, AsFail};
-use serde_json::error::Category::Data;
-use std::time::UNIX_EPOCH;
-use std::os::raw::c_uint;
 
-// todo rm const LOG_NAME : &'static str = "log.log";
 const ACTIVE_FILE_NAME: &'static str = "log.active";
 const ACTIVE_EXT : &'static str = "active";
 const PASSIVE_EXT : &'static str = "passive";
@@ -29,14 +22,7 @@ enum Command {
     Remove { key : String},
 }
 
-type Offset = u64;
 type Index = HashMap<String, LogPointer>;
-
-//todo remove
-enum DataFile {
-    Active(ActiveFile),
-    Passive(PassiveFile),
-}
 
 trait DataFileGetter {
     fn get_path(&self) -> &PathBuf;
@@ -181,7 +167,7 @@ impl KvStore {
     where
         T: Into<std::path::PathBuf>
     {
-        let mut path = path.into();
+        let path = path.into();
         let mut log = Log::new(&path)?;
         let index = KvStore::index(&mut log)?;
 
@@ -248,7 +234,7 @@ impl KvStore {
     fn compact(&mut self) -> Result<()> {
         //todo needed?
         self.dump()?;
-        self.reindex(); //todo rly here?
+        self.reindex()?; //todo rly here?
 
         // Create backup
         // Disabled due to "compaction" test failing/
@@ -363,7 +349,7 @@ impl KvStore {
         }
 
         let active = &mut log.active;
-        KvStore::index_datafile(&mut index, active);
+        KvStore::index_datafile(&mut index, active)?;
 
         Ok(index)
     }
