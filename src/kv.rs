@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs::{File, DirEntry};
 use std::fs;
-use std::io::{Seek, SeekFrom, Write, BufReader, BufWriter};
+use std::io::{Seek, SeekFrom, Write, BufReader, BufWriter, BufRead};
 use std::path::{PathBuf, Path};
 
 use serde::{Serialize, Deserialize};
@@ -11,7 +11,7 @@ use crate::error::KvError::{KeyNotFound, UnexpectedCommand};
 pub use crate::error::{KvError, Result};
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
-use failure::Fail;
+use failure::{Fail, AsFail};
 use serde_json::error::Category::Data;
 use std::time::UNIX_EPOCH;
 use std::os::raw::c_uint;
@@ -129,7 +129,19 @@ impl Log {
                     false
                 }})
             .collect::<Vec<PathBuf>>();
-        passive_files.sort(); // todo what if some of names are not numbers?
+
+        // Sort passive files by serial number in name
+        passive_files.sort_by(|left, right| { //TODO PLEASE DO NOT HANDLE ERRORS LIKE AN ASSHOLE
+            let to_int = |path: &PathBuf|->u64 {
+                path.file_stem().unwrap()
+                    .to_str().unwrap()
+                    .parse::<u64>().unwrap()
+            };
+            let left_number = to_int(left);
+            let right_number = to_int(right);
+            left_number.cmp(&right_number)
+        });
+
         let passive_files = passive_files
             .iter()
             .map(PassiveFile::new)
@@ -239,13 +251,18 @@ impl KvStore {
         self.reindex(); //todo rly here?
 
         // Create backup
+        // Disabled due to "compaction" test failing/
+        // Todo create backup_dir not as subdir of log dir
+        /*
         let mut backup_dir = self.path.clone();
         let time = std::time::SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_secs();
+            .as_micros(); // Note: Error while creating directory due to equal names if time duration is too big.
+        //Todo add serial number to backup name
         backup_dir.push(format!("precompact_backup_{0}", time));
         self.backup(&backup_dir)?;
+        */
 
         // Read actual commands
         let commands = self.read_actual_commands();
@@ -264,6 +281,7 @@ impl KvStore {
 
     fn backup(&mut self, mut backup_dir: &PathBuf) -> Result<()> {
         fs::create_dir(&mut backup_dir)?;
+
         for passive in &self.log.passive {
             let mut new_file = backup_dir.clone();
             new_file.push(passive.path.file_name().unwrap());
@@ -376,6 +394,11 @@ impl KvStore {
     fn dump(&mut self) -> Result<()> {
         // todo Move this to Log:: methods
 
+        if self.log.active.reader.get_mut().metadata()?.len() == 0 {
+            // File is already empty, nothing to do here
+            return Ok(())
+        }
+
         // Rename current ACTIVE_FILE_NAME to serial_number.passive
         let serial_number = self.log
             .passive
@@ -389,7 +412,7 @@ impl KvStore {
             + 1;
         let mut new_path = self.path.clone();
         new_path.push(format!("{}.{}", serial_number, PASSIVE_EXT));
-        fs::rename(&self.log.active.path, &mut new_path);
+        fs::rename(&self.log.active.path, &mut new_path)?;
 
         // Move old active file to passives and create new active
         self.log.passive.push(PassiveFile::new(new_path)?);
@@ -402,7 +425,7 @@ impl KvStore {
 impl Drop for KvStore {
     fn drop(&mut self) {
         if let Err(e) = self.compact() {
-            panic!("{}", e);
+            panic!("Error while dropping KvStore: {}", e);
         }
     }
 }

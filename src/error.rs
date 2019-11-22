@@ -8,16 +8,16 @@ pub enum KvError {
     #[fail(display = "Key not found")]
     KeyNotFound,
 
-    #[fail(display = "{}", _0)]
+    #[fail(display = "Storage File Error: {}", _0)]
     StorageFileError(#[cause] std::io::Error),
 
-    #[fail(display = "{}", _0)]
+    #[fail(display = "Serde Error: {}", _0)]
     SerdeError(#[cause] serde_json::Error),
 
     #[fail(display = "Unexpected command")]
     UnexpectedCommand,
 
-    #[fail(display = "{}", _0)]
+    #[fail(display = "Unknown Error: {}", _0)]
     UnknownError(String)
 }
 
