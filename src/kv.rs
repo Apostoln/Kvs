@@ -1,25 +1,25 @@
 use std::collections::HashMap;
-use std::fs::File;
 use std::fs;
-use std::io::{Seek, SeekFrom, Write, BufReader, BufWriter};
+use std::fs::File;
+use std::io::{BufReader, BufWriter, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use serde_json;
 
 use crate::error::KvError::{KeyNotFound, UnexpectedCommand};
 pub use crate::error::{KvError, Result};
 
 const ACTIVE_FILE_NAME: &'static str = "log.active";
-const ACTIVE_EXT : &'static str = "active";
-const PASSIVE_EXT : &'static str = "passive";
-const RECORDS_LIMIT : u64 = 100;
+const ACTIVE_EXT: &'static str = "active";
+const PASSIVE_EXT: &'static str = "passive";
+const RECORDS_LIMIT: u64 = 100;
 const RECORDS_IN_COMPACTED: usize = 100;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 enum Command {
-    Set { key : String, value : String},
-    Remove { key : String},
+    Set { key: String, value: String },
+    Remove { key: String },
 }
 
 type Index = HashMap<String, LogPointer>;
@@ -37,15 +37,15 @@ struct PassiveFile {
 
 impl PassiveFile {
     fn new<T>(path: T) -> Result<PassiveFile>
-        where
-            T: Into<std::path::PathBuf>
+    where
+        T: Into<std::path::PathBuf>,
     {
-        let path= path.into();
+        let path = path.into();
         let file = std::fs::OpenOptions::new()
             .read(true)
             .open(path.clone())?; //todo avoid cloning?
         let reader = BufReader::new(file);
-        Ok(PassiveFile{path, reader})
+        Ok(PassiveFile { path, reader })
     }
 }
 
@@ -67,8 +67,8 @@ struct ActiveFile {
 
 impl ActiveFile {
     fn new<T>(path: T) -> Result<ActiveFile>
-        where
-            T: Into<std::path::PathBuf>
+    where
+        T: Into<std::path::PathBuf>,
     {
         let path = path.into();
         let file = std::fs::OpenOptions::new()
@@ -80,12 +80,16 @@ impl ActiveFile {
         let reader = BufReader::new(file.try_clone()?);
         let writer = BufWriter::new(file.try_clone()?);
 
-        Ok(ActiveFile{path, reader, writer})
+        Ok(ActiveFile {
+            path,
+            reader,
+            writer,
+        })
     }
 }
 
 impl DataFileGetter for ActiveFile {
-    fn get_path(& self) -> &PathBuf {
+    fn get_path(&self) -> &PathBuf {
         &self.path
     }
     fn get_reader(&mut self) -> &mut BufReader<File> {
@@ -101,10 +105,11 @@ pub struct Log {
 impl Log {
     fn new<T>(dir_path: T) -> Result<Log>
     where
-        T: Into<std::path::PathBuf>
+        T: Into<std::path::PathBuf>,
     {
         let dir_path = dir_path.into();
-        let mut passive_files = dir_path.read_dir()?
+        let mut passive_files = dir_path
+            .read_dir()?
             .filter_map(std::result::Result::ok)
             .map(|file| file.path())
             .filter(|path| path.is_file())
@@ -113,12 +118,14 @@ impl Log {
                     ext == PASSIVE_EXT
                 } else {
                     false
-                }})
+                }
+            })
             .collect::<Vec<PathBuf>>();
 
         // Sort passive files by serial number in name
-        passive_files.sort_by(|left, right| { //TODO PLEASE DO NOT HANDLE ERRORS LIKE AN ASSHOLE
-            let to_int = |path: &PathBuf|->u64 {
+        passive_files.sort_by(|left, right| {
+            //TODO PLEASE DO NOT HANDLE ERRORS LIKE AN ASSHOLE
+            let to_int = |path: &PathBuf| -> u64 {
                 path.file_stem().unwrap()
                     .to_str().unwrap()
                     .parse::<u64>().unwrap()
@@ -137,10 +144,11 @@ impl Log {
         active_file_path.push(ACTIVE_FILE_NAME);
         let active_file = ActiveFile::new(active_file_path)?;
 
-        Ok(Log{active: active_file, passive: passive_files})
+        Ok(Log {
+            active: active_file,
+            passive: passive_files,
+        })
     }
-
-
 }
 
 //todo refact LogPointer with direct reference to file instead of PathBuf?
@@ -165,13 +173,18 @@ pub struct KvStore {
 impl KvStore {
     pub fn open<T>(path: T) -> Result<KvStore>
     where
-        T: Into<std::path::PathBuf>
+        T: Into<std::path::PathBuf>,
     {
         let path = path.into();
         let mut log = Log::new(&path)?;
         let index = KvStore::index(&mut log)?;
 
-        Ok(KvStore{index, log, path, unused_records: 0})
+        Ok(KvStore {
+            index,
+            log,
+            path,
+            unused_records: 0,
+        })
     }
 
     pub fn get(&mut self, key: String) -> Result<Option<String>> {
@@ -182,23 +195,23 @@ impl KvStore {
                 Ok(None),
                 |offset| {
                     match KvStore::read_command(log, offset)? {
-                        Command::Set {value, ..} => Ok(Some(value)),
-                        Command::Remove {..} => Err(UnexpectedCommand),
-                    }
-                }
-            )
+                        Command::Set { value, .. } => Ok(Some(value)),
+                        Command::Remove { .. } => Err(UnexpectedCommand),
+            }
+        })
     }
 
     pub fn set(&mut self, key: String, value: String) -> Result<()> {
         let mut writer = &mut self.log.active.writer;
         let pos = writer.seek(SeekFrom::Current(0))?;
 
-        let cmd = Command::Set{key: key.clone(), value };
+        let cmd = Command::Set { key: key.clone(), value };
 
         serde_json::to_writer(&mut writer, &cmd)?;
         writer.flush()?;
 
-        if let Some(_) = self.index.insert(key, LogPointer{file: self.log.active.path.clone(), offset: pos }) { //avoid cloning?
+        if let Some(_) = self.index.insert(key, LogPointer { file: self.log.active.path.clone(), offset: pos}) {
+            //avoid cloning?
             self.unused_records += 1;
         }
 
@@ -216,7 +229,7 @@ impl KvStore {
 
         self.index.remove(&key).ok_or(KeyNotFound)?;
 
-        let cmd = Command::Remove {key};
+        let cmd = Command::Remove { key };
 
         serde_json::to_writer(&mut writer, &cmd)?;
         writer.flush()?;
@@ -229,7 +242,6 @@ impl KvStore {
         self.index = KvStore::index(&mut self.log)?;
         Ok(())
     }
-
 
     fn compact(&mut self) -> Result<()> {
         //todo needed?
@@ -282,7 +294,7 @@ impl KvStore {
             .values()
             .map(|log_ptr| -> Result<Command> {
                 match KvStore::read_command(log, log_ptr)? {
-                    Command::Set {key, value} => Ok(Command::Set {key, value}),
+                    Command::Set { key, value } => Ok(Command::Set { key, value }),
                     _ => Err(UnexpectedCommand),
                 }
             })
@@ -320,7 +332,8 @@ impl KvStore {
     }
 
     fn index_datafile<T>(index: &mut Index, datafile: &mut T) -> Result<()>
-        where T: DataFileGetter
+    where
+        T: DataFileGetter,
     {
         let path = datafile.get_path().clone(); //todo avoid cloning //write only one method returning both path&reader
         let reader = datafile.get_reader();
@@ -329,10 +342,10 @@ impl KvStore {
         let mut stream = serde_json::Deserializer::from_reader(reader).into_iter();
         while let Some(item) = stream.next() {
             match item? {
-                Command::Set {key, ..} => {
-                    index.insert(key, LogPointer{offset: pos, file: path.clone()}); //todo avoid cloning?
+                Command::Set { key, .. } => {
+                    index.insert(key, LogPointer { offset: pos, file: path.clone() }); //todo avoid cloning?
                 }
-                Command::Remove {key} => {
+                Command::Remove { key } => {
                     index.remove(&key).unwrap();
                 }
             }
@@ -360,7 +373,8 @@ impl KvStore {
 
         let reader = if file_path.file_name().unwrap() == ACTIVE_FILE_NAME {
             &mut log.active.reader
-        } else { //todo refact file finding
+        } else {
+            //todo refact file finding
             &mut log
                 .passive
                 .iter_mut()
@@ -382,7 +396,7 @@ impl KvStore {
 
         if self.log.active.reader.get_mut().metadata()?.len() == 0 {
             // File is already empty, nothing to do here
-            return Ok(())
+            return Ok(());
         }
 
         // Rename current ACTIVE_FILE_NAME to serial_number.passive
@@ -394,8 +408,7 @@ impl KvStore {
                     .file_stem().unwrap()
                     .to_str().unwrap()
                     .parse::<i32>().unwrap() //todo error handling
-            })
-            + 1;
+        }) + 1;
         let mut new_path = self.path.clone();
         new_path.push(format!("{}.{}", serial_number, PASSIVE_EXT));
         fs::rename(&self.log.active.path, &mut new_path)?;
@@ -405,7 +418,6 @@ impl KvStore {
         self.log.active = ActiveFile::new(ACTIVE_FILE_NAME)?;
         Ok(())
     }
-
 }
 
 impl Drop for KvStore {
