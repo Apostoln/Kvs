@@ -17,6 +17,9 @@ pub enum KvError {
     #[fail(display = "Unexpected command")]
     UnexpectedCommand,
 
+    #[fail(display = "Invalid name of datafile")]
+    InvalidDatafileName,
+
     #[fail(display = "Unknown Error: {}", _0)]
     UnknownError(String),
 }

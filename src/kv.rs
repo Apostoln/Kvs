@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeMap};
 use std::fs;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Seek, SeekFrom, Write};
@@ -97,9 +97,17 @@ impl DataFileGetter for ActiveFile {
     }
 }
 
+/*
+struct IndexFile {
+    path: PathBuf,
+    reader: BufReader<File>,
+    passive_number: u64, // Or reference?
+}*/
+
 pub struct Log {
     active: ActiveFile,
-    passive: Vec<PassiveFile>,
+    passive: BTreeMap<u64, PassiveFile>,
+    //indexes: Vec<IndexFile>,
 }
 
 impl Log {
@@ -112,33 +120,11 @@ impl Log {
             .read_dir()?
             .filter_map(std::result::Result::ok)
             .map(|file| file.path())
-            .filter(|path| path.is_file())
-            .filter(|path| {
-                if let Some(ext) = path.extension() {
-                    ext == PASSIVE_EXT
-                } else {
-                    false
-                }
+            .filter(|path| path.is_file() && path.extension().map_or(false, |ext| ext == PASSIVE_EXT))
+            .map(|path| -> Result<(u64, PassiveFile)>{
+                Ok((get_serial_number(&path)?, PassiveFile::new(path)?))
             })
-            .collect::<Vec<PathBuf>>();
-
-        // Sort passive files by serial number in name
-        passive_files.sort_by(|left, right| {
-            //TODO PLEASE DO NOT HANDLE ERRORS LIKE AN ASSHOLE
-            let to_int = |path: &PathBuf| -> u64 {
-                path.file_stem().unwrap()
-                    .to_str().unwrap()
-                    .parse::<u64>().unwrap()
-            };
-            let left_number = to_int(left);
-            let right_number = to_int(right);
-            left_number.cmp(&right_number)
-        });
-
-        let passive_files = passive_files
-            .iter()
-            .map(PassiveFile::new)
-            .collect::<Result<Vec<PassiveFile>>>()?;
+            .collect::<Result<_>>()?;
 
         let mut active_file_path = dir_path.clone();
         active_file_path.push(ACTIVE_FILE_NAME);
@@ -160,7 +146,7 @@ struct LogPointer<'a> {
 
 struct LogPointer {
     offset: u64,
-    file: PathBuf, //todo or just Path?
+    file: PathBuf, //todo or just Path? //or serial number?
 }
 
 pub struct KvStore {
@@ -266,7 +252,7 @@ impl KvStore {
         let commands = self.read_actual_commands();
 
         // Remove current passive files
-        for passive in &mut self.log.passive {
+        for passive in &mut self.log.passive.values_mut() {
             std::fs::remove_file(&mut passive.path)?;
         }
 
@@ -280,7 +266,7 @@ impl KvStore {
     fn backup(&mut self, mut backup_dir: &PathBuf) -> Result<()> {
         fs::create_dir(&mut backup_dir)?;
 
-        for passive in &self.log.passive {
+        for passive in self.log.passive.values_mut() {
             let mut new_file = backup_dir.clone();
             new_file.push(passive.path.file_name().unwrap());
             fs::copy(&passive.path, new_file)?;
@@ -357,7 +343,7 @@ impl KvStore {
     fn index(log: &mut Log) -> Result<Index> {
         let mut index = Index::new();
 
-        for passive in &mut log.passive {
+        for passive in &mut log.passive.values_mut() {
             KvStore::index_datafile(&mut index, passive)?;
         }
 
@@ -374,11 +360,9 @@ impl KvStore {
         let reader = if file_path.file_name().unwrap() == ACTIVE_FILE_NAME {
             &mut log.active.reader
         } else {
-            //todo refact file finding
             &mut log
                 .passive
-                .iter_mut()
-                .find(|el| el.path == *file_path)
+                .get_mut(&get_serial_number(file_path)?)
                 .unwrap()
                 .reader
         };
@@ -393,7 +377,6 @@ impl KvStore {
 
     fn dump(&mut self) -> Result<()> {
         // todo Move this to Log:: methods
-
         if self.log.active.reader.get_mut().metadata()?.len() == 0 {
             // File is already empty, nothing to do here
             return Ok(());
@@ -402,19 +385,16 @@ impl KvStore {
         // Rename current ACTIVE_FILE_NAME to serial_number.passive
         let serial_number = self.log
             .passive
-            .last()
-            .map_or(0, |file| {
-                file.path
-                    .file_stem().unwrap()
-                    .to_str().unwrap()
-                    .parse::<i32>().unwrap() //todo error handling
-        }) + 1;
+            .values_mut()
+            .next_back() //option here
+            .map_or(Ok(0), |file| get_serial_number(&file.path))?
+            + 1;
         let mut new_path = self.path.clone();
         new_path.push(format!("{}.{}", serial_number, PASSIVE_EXT));
         fs::rename(&self.log.active.path, &mut new_path)?;
 
         // Move old active file to passives and create new active
-        self.log.passive.push(PassiveFile::new(new_path)?);
+        self.log.passive.insert(serial_number, PassiveFile::new(new_path)?);
         self.log.active = ActiveFile::new(ACTIVE_FILE_NAME)?;
         Ok(())
     }
@@ -426,4 +406,12 @@ impl Drop for KvStore {
             panic!("Error while dropping KvStore: {}", e);
         }
     }
+}
+
+fn get_serial_number(path: &PathBuf) -> Result<u64> {
+    path.file_stem()
+        .and_then(|name| name.to_str())
+        .ok_or(KvError::InvalidDatafileName)?
+        .parse::<u64>()
+        .or(Err(KvError::InvalidDatafileName))
 }
