@@ -25,6 +25,7 @@ enum Command {
 type Index = HashMap<String, LogPointer>;
 
 trait DataFileGetter {
+    fn get_inner(&mut self) -> (&PathBuf, &mut BufReader<File>);
     fn get_path(&self) -> &PathBuf;
     fn get_reader(&mut self) -> &mut BufReader<File>;
 }
@@ -40,16 +41,19 @@ impl PassiveFile {
     where
         T: Into<std::path::PathBuf>,
     {
-        let path = path.into();
+        let mut path = path.into();
         let file = std::fs::OpenOptions::new()
             .read(true)
-            .open(path.clone())?; //todo avoid cloning?
+            .open(&mut path)?;
         let reader = BufReader::new(file);
         Ok(PassiveFile { path, reader })
     }
 }
 
 impl DataFileGetter for PassiveFile {
+    fn get_inner(&mut self) -> (&PathBuf, &mut BufReader<File>) {
+        (&self.path, &mut self.reader)
+    }
     fn get_path(&self) -> &PathBuf {
         &self.path
     }
@@ -70,13 +74,13 @@ impl ActiveFile {
     where
         T: Into<std::path::PathBuf>,
     {
-        let path = path.into();
+        let mut path = path.into();
         let file = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .append(true)
-            .open(path.clone())?; //todo avoid cloning
+            .open(&mut path)?;
         let reader = BufReader::new(file.try_clone()?);
         let writer = BufWriter::new(file.try_clone()?);
 
@@ -89,6 +93,9 @@ impl ActiveFile {
 }
 
 impl DataFileGetter for ActiveFile {
+    fn get_inner(&mut self) -> (&PathBuf, &mut BufReader<File>) {
+        (&self.path, &mut self.reader)
+    }
     fn get_path(&self) -> &PathBuf {
         &self.path
     }
@@ -321,15 +328,13 @@ impl KvStore {
     where
         T: DataFileGetter,
     {
-        let path = datafile.get_path().clone(); //todo avoid cloning //write only one method returning both path&reader
-        let reader = datafile.get_reader();
-
+        let (path, reader) = datafile.get_inner();
         let mut pos = reader.seek(SeekFrom::Start(0))?;
         let mut stream = serde_json::Deserializer::from_reader(reader).into_iter();
         while let Some(item) = stream.next() {
             match item? {
                 Command::Set { key, .. } => {
-                    index.insert(key, LogPointer { offset: pos, file: path.clone() }); //todo avoid cloning?
+                    index.insert(key, LogPointer { offset: pos, file: path.to_owned() });
                 }
                 Command::Remove { key } => {
                     index.remove(&key).unwrap();
