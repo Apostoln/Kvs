@@ -195,9 +195,33 @@ impl Log {
     }
 }
 
+enum DataFile {
+    Active,
+    Passive(u64), //serial number
+}
+
 struct LogPointer {
     offset: u64,
-    file: PathBuf, //todo or just Path? //or serial number?
+    file: DataFile,
+}
+
+impl LogPointer {
+    fn new(offset: u64, file_path: &PathBuf) -> Result<LogPointer> {
+        Ok(
+            if file_path.file_name().unwrap() == ACTIVE_FILE_NAME {
+                LogPointer {
+                    offset,
+                    file: DataFile::Active,
+                }
+            }
+            else {
+                LogPointer {
+                    offset,
+                    file: DataFile::Passive(get_serial_number(file_path)?),
+                }
+            }
+        )
+    }
 }
 
 pub struct KvStore {
@@ -254,8 +278,7 @@ impl KvStore {
         serde_json::to_writer(&mut writer, &cmd)?;
         writer.flush()?;
 
-        if let Some(_) = self.index.insert(key, LogPointer { file: self.log.active.path.clone(), offset: pos}) {
-            //avoid cloning?
+        if let Some(_) = self.index.insert(key, LogPointer { file: DataFile::Active, offset: pos }) {
             self.unused_records += 1;
         }
 
@@ -379,7 +402,7 @@ impl KvStore {
         while let Some(item) = stream.next() {
             match item? {
                 Command::Set { key, .. } => {
-                    index.insert(key, LogPointer { offset: pos, file: path.to_owned() });
+                    index.insert(key, LogPointer::new(pos, path)?);
                 }
                 Command::Remove { key } => {
                     index.remove(&key).unwrap();
@@ -407,14 +430,13 @@ impl KvStore {
         let file_path = &log_ptr.file;
         let offset = log_ptr.offset;
 
-        let reader = if file_path.file_name().unwrap() == ACTIVE_FILE_NAME {
-            &mut log.active.reader
-        } else {
-            &mut log
+        let reader = match log_ptr.file {
+            DataFile::Active => &mut log.active.reader,
+            DataFile::Passive(serial_number) => &mut log
                 .passive
-                .get_mut(&get_serial_number(file_path)?)
+                .get_mut(&serial_number)
                 .unwrap()
-                .reader
+                .reader,
         };
 
         reader.seek(SeekFrom::Start(offset))?;
