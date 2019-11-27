@@ -48,6 +48,27 @@ impl PassiveFile {
         let reader = BufReader::new(file);
         Ok(PassiveFile { path, reader })
     }
+
+    /// Create PassiveFile from commands and path
+    /// Create new passive file on `path` and write commands to this file.
+    ///
+    /// Note: There must be no passive file with name `path` before calling this function
+    fn from_commands(commands: Vec<Result<Command>>, mut path: PathBuf) -> Result<PassiveFile> {
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .append(true)
+            .open(&mut path)?;
+        let mut writer = BufWriter::new(file.try_clone()?);
+        let mut reader = BufReader::new(file.try_clone()?);
+
+        for cmd in commands {
+            serde_json::to_writer(&mut writer, &cmd?)?;
+        }
+        writer.flush()?;
+        Ok(PassiveFile{ path, reader })
+    }
 }
 
 impl DataFileGetter for PassiveFile {
@@ -119,7 +140,7 @@ pub struct Log {
 }
 
 impl Log {
-    fn new<T>(dir_path: T) -> Result<Log>
+    fn open<T>(dir_path: T) -> Result<Log>
     where
         T: Into<std::path::PathBuf>,
     {
@@ -143,6 +164,11 @@ impl Log {
             passive: passive_files,
             dir_path,
         })
+    }
+
+    fn set_passive(&mut self, passive: BTreeMap<u64, PassiveFile>) -> Result<()> {
+        self.passive = passive;
+        Ok(())
     }
 
     fn dump(&mut self) -> Result<()> {
@@ -185,7 +211,7 @@ impl KvStore {
         T: Into<std::path::PathBuf>,
     {
         let path = path.into();
-        let mut log = Log::new(&path)?;
+        let mut log = Log::open(&path)?;
         let index = KvStore::index(&mut log)?;
 
         Ok(KvStore {
@@ -278,9 +304,9 @@ impl KvStore {
             std::fs::remove_file(&mut passive.path)?;
         }
 
-        // Create new passive files and write actual commands to them, then recreate struct Log
+        // Create new passive files and write actual commands to them,
+        // then replace old passive files to new in self.log
         self.write_actual_commands(commands)?;
-        self.log = Log::new(&self.log.dir_path)?;
 
         Ok(())
     }
@@ -309,13 +335,16 @@ impl KvStore {
             .collect()
     }
 
+    /// Write saved in memory actual commands to new passive files
+    /// Split commands to chunks of `RECORDS_IN_COMPACTED` elements
+    /// and write each chunk to new passive file in log directory.
+    /// Collect passive files to BTreeMap and set it to log.
+    ///
+    /// Note: There must be no passive files in log directory before calling this function
     fn write_actual_commands(&mut self, mut commands: Vec<Result<Command>>) -> Result<()> {
-        //todo create PassiveFile's directly here?
-        let mut counter: u64 = 1;
+        let mut passive_files: BTreeMap<u64, PassiveFile> = BTreeMap::new();
 
-        // Separate commands to chunks with RECORDS_IN_COMPACTED elements and write
-        // each chunk to new passive file in log directory.
-        // Note: Instance of PassiveFile will be created later in Log::new()
+        let mut counter: u64 = 1;
         let commands = &mut commands;
         while !commands.is_empty() {
             let chunk = std::iter::from_fn(|| commands.pop())
@@ -324,27 +353,13 @@ impl KvStore {
             let mut path = self.log.dir_path.clone();
             path.push(format!("{}.{}", counter, PASSIVE_EXT));
 
-            KvStore::write_commands_to_passive_file(chunk, path)?;
+            let passive_file = PassiveFile::from_commands(chunk, path)?;
+            passive_files.insert(counter, passive_file);
 
             counter += 1;
         }
-        Ok(())
-    }
 
-    fn write_commands_to_passive_file(commands: Vec<Result<Command>>, file_path: PathBuf) -> Result<()> {
-        // Create new file
-        let file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .append(true)
-            .open(file_path)?;
-        let mut writer = BufWriter::new(file);
-
-        // Write commands
-        for cmd in commands {
-            serde_json::to_writer(&mut writer, &cmd?)?;
-        }
-        writer.flush()?;
+        self.log.set_passive(passive_files)?;
         Ok(())
     }
 
