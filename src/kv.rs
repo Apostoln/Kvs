@@ -310,32 +310,41 @@ impl KvStore {
     }
 
     fn write_actual_commands(&mut self, mut commands: Vec<Result<Command>>) -> Result<()> {
-        //todo move creating files to other function?
         //todo create PassiveFile's directly here?
         let mut counter: u64 = 1;
 
         // Separate commands to chunks with RECORDS_IN_COMPACTED elements and write
-        // each chunk to new passive file.
+        // each chunk to new passive file in log directory.
+        // Note: Instance of PassiveFile will be created later in Log::new()
         let commands = &mut commands;
         while !commands.is_empty() {
-            // Create new file
+            let chunk = std::iter::from_fn(|| commands.pop())
+                .take(RECORDS_IN_COMPACTED)
+                .collect::<Vec<_>>();
             let mut path = self.log.dir_path.clone();
             path.push(format!("{}.{}", counter, PASSIVE_EXT));
-            let file = std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .append(true)
-                .open(path)?;
-            let mut writer = BufWriter::new(file);
 
-            // Take chunk with RECORDS_IN_COMPACTED from commands and write its content
-            for cmd in std::iter::from_fn(|| commands.pop()).take(RECORDS_IN_COMPACTED) {
-                serde_json::to_writer(&mut writer, &cmd?)?;
-            }
-            writer.flush()?;
+            KvStore::write_commands_to_passive_file(chunk, path)?;
 
             counter += 1;
         }
+        Ok(())
+    }
+
+    fn write_commands_to_passive_file(commands: Vec<Result<Command>>, file_path: PathBuf) -> Result<()> {
+        // Create new file
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .append(true)
+            .open(file_path)?;
+        let mut writer = BufWriter::new(file);
+
+        // Write commands
+        for cmd in commands {
+            serde_json::to_writer(&mut writer, &cmd?)?;
+        }
+        writer.flush()?;
         Ok(())
     }
 
