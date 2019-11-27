@@ -114,6 +114,7 @@ struct IndexFile {
 pub struct Log {
     active: ActiveFile,
     passive: BTreeMap<u64, PassiveFile>,
+    dir_path: PathBuf,
     //indexes: Vec<IndexFile>,
 }
 
@@ -140,7 +141,30 @@ impl Log {
         Ok(Log {
             active: active_file,
             passive: passive_files,
+            dir_path,
         })
+    }
+
+    fn dump(&mut self) -> Result<()> {
+        if self.active.reader.get_mut().metadata()?.len() == 0 {
+            // File is already empty, nothing to do here
+            return Ok(());
+        }
+
+        // Rename current ACTIVE_FILE_NAME to serial_number.passive
+        let serial_number = self.passive
+            .values_mut()
+            .next_back() //option here
+            .map_or(Ok(0), |file| get_serial_number(&file.path))?
+            + 1;
+        let mut new_path = self.dir_path.clone();
+        new_path.push(format!("{}.{}", serial_number, PASSIVE_EXT));
+        fs::rename(&self.active.path, &mut new_path)?;
+
+        // Move old active file to passives and create new active
+        self.passive.insert(serial_number, PassiveFile::new(new_path)?);
+        self.active = ActiveFile::new(ACTIVE_FILE_NAME)?;
+        Ok(())
     }
 }
 
@@ -152,7 +176,6 @@ struct LogPointer {
 pub struct KvStore {
     index: Index,
     log: Log,
-    path: PathBuf,
     unused_records: u64,
 }
 
@@ -168,7 +191,6 @@ impl KvStore {
         Ok(KvStore {
             index,
             log,
-            path,
             unused_records: 0,
         })
     }
@@ -231,7 +253,7 @@ impl KvStore {
 
     fn compact(&mut self) -> Result<()> {
         //todo needed?
-        self.dump()?;
+        self.log.dump()?;
         self.reindex()?; //todo rly here?
 
         // Create backup
@@ -258,7 +280,7 @@ impl KvStore {
 
         // Create new passive files and write actual commands to them, then recreate struct Log
         self.write_actual_commands(commands)?;
-        self.log = Log::new(&self.path)?;
+        self.log = Log::new(&self.log.dir_path)?;
 
         Ok(())
     }
@@ -297,7 +319,7 @@ impl KvStore {
         let commands = &mut commands;
         while !commands.is_empty() {
             // Create new file
-            let mut path = self.path.clone();
+            let mut path = self.log.dir_path.clone();
             path.push(format!("{}.{}", counter, PASSIVE_EXT));
             let file = std::fs::OpenOptions::new()
                 .write(true)
@@ -371,30 +393,6 @@ impl KvStore {
             .into_iter()
             .next()
             .unwrap()?)
-    }
-
-    fn dump(&mut self) -> Result<()> {
-        // todo Move this to Log:: methods
-        if self.log.active.reader.get_mut().metadata()?.len() == 0 {
-            // File is already empty, nothing to do here
-            return Ok(());
-        }
-
-        // Rename current ACTIVE_FILE_NAME to serial_number.passive
-        let serial_number = self.log
-            .passive
-            .values_mut()
-            .next_back() //option here
-            .map_or(Ok(0), |file| get_serial_number(&file.path))?
-            + 1;
-        let mut new_path = self.path.clone();
-        new_path.push(format!("{}.{}", serial_number, PASSIVE_EXT));
-        fs::rename(&self.log.active.path, &mut new_path)?;
-
-        // Move old active file to passives and create new active
-        self.log.passive.insert(serial_number, PassiveFile::new(new_path)?);
-        self.log.active = ActiveFile::new(ACTIVE_FILE_NAME)?;
-        Ok(())
     }
 }
 
