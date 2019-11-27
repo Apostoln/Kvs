@@ -278,9 +278,8 @@ impl KvStore {
     }
 
     fn compact(&mut self) -> Result<()> {
-        //todo needed?
         self.log.dump()?;
-        self.reindex()?; //todo rly here?
+        self.reindex()?;
 
         // Create backup
         // Disabled due to "compaction" test failing/
