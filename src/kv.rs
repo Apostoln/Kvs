@@ -144,13 +144,6 @@ impl Log {
     }
 }
 
-//todo refact LogPointer with direct reference to file instead of PathBuf?
-/*
-struct LogPointer<'a> {
-    offset: u64,
-    datafile: &'a PassiveFile,
-}*/
-
 struct LogPointer {
     offset: u64,
     file: PathBuf, //todo or just Path? //or serial number?
