@@ -9,6 +9,7 @@ use serde_json;
 
 use crate::error::KvError::{KeyNotFound, UnexpectedCommand};
 pub use crate::error::{KvError, Result};
+use std::time::UNIX_EPOCH;
 
 const ACTIVE_FILE_NAME: &'static str = "log.active";
 const ACTIVE_EXT: &'static str = "active";
@@ -203,6 +204,7 @@ pub struct KvStore {
     index: Index,
     log: Log,
     unused_records: u64,
+    backups_dir: Option<PathBuf>,
 }
 
 impl KvStore {
@@ -218,7 +220,15 @@ impl KvStore {
             index,
             log,
             unused_records: 0,
+            backups_dir: None,
         })
+    }
+
+    pub fn set_backups_dir<T>(&mut self, path: T)
+        where
+            T: Into<std::path::PathBuf>,
+    {
+        self.backups_dir = Some(path.into());
     }
 
     pub fn get(&mut self, key: String) -> Result<Option<String>> {
@@ -281,19 +291,16 @@ impl KvStore {
         self.log.dump()?;
         self.reindex()?;
 
-        // Create backup
-        // Disabled due to "compaction" test failing/
-        // Todo create backup_dir not as subdir of log dir
-        /*
-        let mut backup_dir = self.path.clone();
-        let time = std::time::SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_micros(); // Note: Error while creating directory due to equal names if time duration is too big.
-        //Todo add serial number to backup name
-        backup_dir.push(format!("precompact_backup_{0}", time));
-        self.backup(&backup_dir)?;
-        */
+        // Create backup if specified
+        if let Some(backups_dir) = &self.backups_dir {
+            let mut backup_dir = backups_dir.clone();
+            let time = std::time::SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_micros(); // Note: Error while creating directory due to equal names if time duration is too big.
+            backup_dir.push(format!("precompact_backup_{0}", time));
+            self.backup(&backup_dir)?;
+        }
 
         // Read actual commands
         let commands = self.read_actual_commands();
