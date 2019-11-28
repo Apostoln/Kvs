@@ -1,19 +1,20 @@
 use std::collections::{HashMap, BTreeMap};
 use std::fs;
-use std::fs::File;
-use std::io::{BufReader, BufWriter, Seek, SeekFrom, Write};
+use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use serde_json;
 
 use crate::error::KvError::{KeyNotFound, UnexpectedCommand};
+use crate::log::Log;
+use crate::logpointer::*;
+use crate::datafile::*;
+use crate::utils::*;
+
 pub use crate::error::{KvError, Result};
 use std::time::UNIX_EPOCH;
 
-const ACTIVE_FILE_NAME: &'static str = "log.active";
-const ACTIVE_EXT: &'static str = "active";
-const PASSIVE_EXT: &'static str = "passive";
 const RECORDS_LIMIT: u64 = 100;
 const RECORDS_IN_COMPACTED: usize = 100;
 
@@ -24,205 +25,6 @@ enum Command {
 }
 
 type Index = HashMap<String, LogPointer>;
-
-trait DataFileGetter {
-    fn get_inner(&mut self) -> (&PathBuf, &mut BufReader<File>);
-    fn get_path(&self) -> &PathBuf;
-    fn get_reader(&mut self) -> &mut BufReader<File>;
-}
-
-#[derive(Debug)]
-struct PassiveFile {
-    path: PathBuf,
-    reader: BufReader<File>,
-}
-
-impl PassiveFile {
-    fn new<T>(path: T) -> Result<PassiveFile>
-    where
-        T: Into<std::path::PathBuf>,
-    {
-        let mut path = path.into();
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .open(&mut path)?;
-        let reader = BufReader::new(file);
-        Ok(PassiveFile { path, reader })
-    }
-
-    /// Create PassiveFile from commands and path
-    /// Create new passive file on `path` and write commands to this file.
-    ///
-    /// Note: There must be no passive file with name `path` before calling this function
-    fn from_commands(commands: Vec<Result<Command>>, mut path: PathBuf) -> Result<PassiveFile> {
-        let mut file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .append(true)
-            .open(&mut path)?;
-        let mut writer = BufWriter::new(file.try_clone()?);
-        let mut reader = BufReader::new(file.try_clone()?);
-
-        for cmd in commands {
-            serde_json::to_writer(&mut writer, &cmd?)?;
-        }
-        writer.flush()?;
-        Ok(PassiveFile{ path, reader })
-    }
-}
-
-impl DataFileGetter for PassiveFile {
-    fn get_inner(&mut self) -> (&PathBuf, &mut BufReader<File>) {
-        (&self.path, &mut self.reader)
-    }
-    fn get_path(&self) -> &PathBuf {
-        &self.path
-    }
-    fn get_reader(&mut self) -> &mut BufReader<File> {
-        &mut self.reader
-    }
-}
-
-#[derive(Debug)]
-struct ActiveFile {
-    path: PathBuf,
-    reader: BufReader<File>,
-    writer: BufWriter<File>,
-}
-
-impl ActiveFile {
-    fn new<T>(path: T) -> Result<ActiveFile>
-    where
-        T: Into<std::path::PathBuf>,
-    {
-        let mut path = path.into();
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .append(true)
-            .open(&mut path)?;
-        let reader = BufReader::new(file.try_clone()?);
-        let writer = BufWriter::new(file.try_clone()?);
-
-        Ok(ActiveFile {
-            path,
-            reader,
-            writer,
-        })
-    }
-}
-
-impl DataFileGetter for ActiveFile {
-    fn get_inner(&mut self) -> (&PathBuf, &mut BufReader<File>) {
-        (&self.path, &mut self.reader)
-    }
-    fn get_path(&self) -> &PathBuf {
-        &self.path
-    }
-    fn get_reader(&mut self) -> &mut BufReader<File> {
-        &mut self.reader
-    }
-}
-
-/*
-struct IndexFile {
-    path: PathBuf,
-    reader: BufReader<File>,
-    passive_number: u64, // Or reference?
-}*/
-
-pub struct Log {
-    active: ActiveFile,
-    passive: BTreeMap<u64, PassiveFile>,
-    dir_path: PathBuf,
-    //indexes: Vec<IndexFile>,
-}
-
-impl Log {
-    fn open<T>(dir_path: T) -> Result<Log>
-    where
-        T: Into<std::path::PathBuf>,
-    {
-        let dir_path = dir_path.into();
-        let mut passive_files = dir_path
-            .read_dir()?
-            .filter_map(std::result::Result::ok)
-            .map(|file| file.path())
-            .filter(|path| path.is_file() && path.extension().map_or(false, |ext| ext == PASSIVE_EXT))
-            .map(|path| -> Result<(u64, PassiveFile)>{
-                Ok((get_serial_number(&path)?, PassiveFile::new(path)?))
-            })
-            .collect::<Result<_>>()?;
-
-        let mut active_file_path = dir_path.clone();
-        active_file_path.push(ACTIVE_FILE_NAME);
-        let active_file = ActiveFile::new(active_file_path)?;
-
-        Ok(Log {
-            active: active_file,
-            passive: passive_files,
-            dir_path,
-        })
-    }
-
-    fn set_passive(&mut self, passive: BTreeMap<u64, PassiveFile>) -> Result<()> {
-        self.passive = passive;
-        Ok(())
-    }
-
-    fn dump(&mut self) -> Result<()> {
-        if self.active.reader.get_mut().metadata()?.len() == 0 {
-            // File is already empty, nothing to do here
-            return Ok(());
-        }
-
-        // Rename current ACTIVE_FILE_NAME to serial_number.passive
-        let serial_number = self.passive
-            .values_mut()
-            .next_back() //option here
-            .map_or(Ok(0), |file| get_serial_number(&file.path))?
-            + 1;
-        let mut new_path = self.dir_path.clone();
-        new_path.push(format!("{}.{}", serial_number, PASSIVE_EXT));
-        fs::rename(&self.active.path, &mut new_path)?;
-
-        // Move old active file to passives and create new active
-        self.passive.insert(serial_number, PassiveFile::new(new_path)?);
-        self.active = ActiveFile::new(ACTIVE_FILE_NAME)?;
-        Ok(())
-    }
-}
-
-enum DataFile {
-    Active,
-    Passive(u64), //serial number
-}
-
-struct LogPointer {
-    offset: u64,
-    file: DataFile,
-}
-
-impl LogPointer {
-    fn new(offset: u64, file_path: &PathBuf) -> Result<LogPointer> {
-        Ok(
-            if file_path.file_name().unwrap() == ACTIVE_FILE_NAME {
-                LogPointer {
-                    offset,
-                    file: DataFile::Active,
-                }
-            }
-            else {
-                LogPointer {
-                    offset,
-                    file: DataFile::Passive(get_serial_number(file_path)?),
-                }
-            }
-        )
-    }
-}
 
 pub struct KvStore {
     index: Index,
@@ -364,13 +166,12 @@ impl KvStore {
             .collect()
     }
 
-    /// Write saved in memory actual commands to new passive files
-    /// Split commands to chunks of `RECORDS_IN_COMPACTED` elements
-    /// and write each chunk to new passive file in log directory.
+    /// Write saved in memory actual commands to new passive files. Split commands to chunks
+    /// of `RECORDS_IN_COMPACTED` elements and write each chunk to new passive file in log directory.
     /// Collect passive files to BTreeMap and set it to log.
     ///
     /// Note: There must be no passive files in log directory before calling this function
-    fn write_actual_commands(&mut self, mut commands: Vec<Result<Command>>) -> Result<()> {
+    fn write_actual_commands(&mut self, mut commands: Vec<Result<Command>>) -> Result<()> { //todo move to log?
         let mut passive_files: BTreeMap<u64, PassiveFile> = BTreeMap::new();
 
         let mut counter: u64 = 1;
@@ -426,8 +227,7 @@ impl KvStore {
         Ok(index)
     }
 
-    fn read_command(log: &mut Log, log_ptr: &LogPointer) -> Result<Command> {
-        let file_path = &log_ptr.file;
+    fn read_command(log: &mut Log, log_ptr: &LogPointer) -> Result<Command> { //todo move to log?
         let offset = log_ptr.offset;
 
         let reader = match log_ptr.file {
@@ -454,12 +254,4 @@ impl Drop for KvStore {
             panic!("Error while dropping KvStore: {}", e);
         }
     }
-}
-
-fn get_serial_number(path: &PathBuf) -> Result<u64> {
-    path.file_stem()
-        .and_then(|name| name.to_str())
-        .ok_or(KvError::InvalidDatafileName)?
-        .parse::<u64>()
-        .or(Err(KvError::InvalidDatafileName))
 }
