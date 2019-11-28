@@ -32,7 +32,7 @@ impl PassiveFile {
     /// Create new passive file on `path` and write commands to this file.
     ///
     /// Note: There must be no passive file with name `path` before calling this function
-    pub fn from_commands(commands: Vec<Result<impl Serialize>>, mut path: PathBuf) -> Result<PassiveFile> {
+    pub fn from_records(records: Vec<Result<impl Serialize>>, mut path: PathBuf) -> Result<PassiveFile> {
         let file = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
@@ -42,8 +42,8 @@ impl PassiveFile {
         let mut writer = BufWriter::new(file.try_clone()?);
         let reader = BufReader::new(file.try_clone()?);
 
-        for cmd in commands {
-            serde_json::to_writer(&mut writer, &cmd?)?;
+        for record in records {
+            serde_json::to_writer(&mut writer, &record?)?;
         }
         writer.flush()?;
         Ok(PassiveFile{ path, reader })

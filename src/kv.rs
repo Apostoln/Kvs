@@ -1,7 +1,8 @@
-use std::collections::{HashMap, BTreeMap};
+use std::collections::HashMap;
 use std::fs;
 use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;
+use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -10,13 +11,10 @@ use crate::error::KvError::{KeyNotFound, UnexpectedCommand};
 use crate::log::Log;
 use crate::logpointer::*;
 use crate::datafile::*;
-use crate::utils::*;
 
 pub use crate::error::{KvError, Result};
-use std::time::UNIX_EPOCH;
 
 const RECORDS_LIMIT: u64 = 100;
-const RECORDS_IN_COMPACTED: usize = 100;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 enum Command {
@@ -63,8 +61,8 @@ impl KvStore {
             .get(&key)
             .map_or(
                 Ok(None),
-                |offset| {
-                    match KvStore::read_command(log, offset)? {
+                |log_ptr| {
+                    match log.get_record(log_ptr)? {
                         Command::Set { value, .. } => Ok(Some(value)),
                         Command::Remove { .. } => Err(UnexpectedCommand),
             }
@@ -85,7 +83,7 @@ impl KvStore {
         }
 
         if self.unused_records > RECORDS_LIMIT {
-            self.compact()?;
+            self.compact_log()?;
             self.reindex()?;
             self.unused_records = 0;
         }
@@ -112,7 +110,7 @@ impl KvStore {
         Ok(())
     }
 
-    fn compact(&mut self) -> Result<()> {
+    fn compact_log(&mut self) -> Result<()> {
         self.log.dump()?;
         self.reindex()?;
 
@@ -128,16 +126,12 @@ impl KvStore {
         }
 
         // Read actual commands
-        let commands = self.read_actual_commands();
-
-        // Remove current passive files
-        for passive in &mut self.log.passive.values_mut() {
-            std::fs::remove_file(&mut passive.path)?;
-        }
+        let commands = self.actual_commands();
 
         // Create new passive files and write actual commands to them,
         // then replace old passive files to new in self.log
-        self.write_actual_commands(commands)?;
+        self.log.compact(commands)?;
+        self.reindex()?;
 
         Ok(())
     }
@@ -153,44 +147,17 @@ impl KvStore {
         Ok(())
     }
 
-    fn read_actual_commands(&mut self) -> Vec<Result<Command>> {
+    fn actual_commands(&mut self) -> Vec<Result<Command>> {
         let log = &mut self.log;
         self.index
             .values()
             .map(|log_ptr| -> Result<Command> {
-                match KvStore::read_command(log, log_ptr)? {
+                match log.get_record(log_ptr)? {
                     Command::Set { key, value } => Ok(Command::Set { key, value }),
                     _ => Err(UnexpectedCommand),
                 }
             })
             .collect()
-    }
-
-    /// Write saved in memory actual commands to new passive files. Split commands to chunks
-    /// of `RECORDS_IN_COMPACTED` elements and write each chunk to new passive file in log directory.
-    /// Collect passive files to BTreeMap and set it to log.
-    ///
-    /// Note: There must be no passive files in log directory before calling this function
-    fn write_actual_commands(&mut self, mut commands: Vec<Result<Command>>) -> Result<()> { //todo move to log?
-        let mut passive_files: BTreeMap<u64, PassiveFile> = BTreeMap::new();
-
-        let mut counter: u64 = 1;
-        let commands = &mut commands;
-        while !commands.is_empty() {
-            let chunk = std::iter::from_fn(|| commands.pop())
-                .take(RECORDS_IN_COMPACTED)
-                .collect::<Vec<_>>();
-            let mut path = self.log.dir_path.clone();
-            path.push(format!("{}.{}", counter, PASSIVE_EXT));
-
-            let passive_file = PassiveFile::from_commands(chunk, path)?;
-            passive_files.insert(counter, passive_file);
-
-            counter += 1;
-        }
-
-        self.log.set_passive(passive_files)?;
-        Ok(())
     }
 
     fn index_datafile<T>(index: &mut Index, datafile: &mut T) -> Result<()>
@@ -226,31 +193,11 @@ impl KvStore {
 
         Ok(index)
     }
-
-    fn read_command(log: &mut Log, log_ptr: &LogPointer) -> Result<Command> { //todo move to log?
-        let offset = log_ptr.offset;
-
-        let reader = match log_ptr.file {
-            DataFile::Active => &mut log.active.reader,
-            DataFile::Passive(serial_number) => &mut log
-                .passive
-                .get_mut(&serial_number)
-                .unwrap()
-                .reader,
-        };
-
-        reader.seek(SeekFrom::Start(offset))?;
-
-        Ok(serde_json::Deserializer::from_reader(reader)
-            .into_iter()
-            .next()
-            .unwrap()?)
-    }
 }
 
 impl Drop for KvStore {
     fn drop(&mut self) {
-        if let Err(e) = self.compact() {
+        if let Err(e) = self.compact_log() {
             panic!("Error while dropping KvStore: {}", e);
         }
     }

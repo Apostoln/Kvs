@@ -4,6 +4,7 @@ use crate::error::{Result, KvError};
 
 pub const ACTIVE_FILE_NAME: &'static str = "log.active";
 pub const PASSIVE_EXT: &'static str = "passive";
+pub const RECORDS_IN_COMPACTED: usize = 100;
 
 pub fn get_serial_number(path: &PathBuf) -> Result<u64> {
     path.file_stem()

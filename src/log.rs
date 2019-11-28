@@ -1,10 +1,13 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::io::{Seek, SeekFrom};
 use std::fs;
 
 use crate::error::Result;
 use crate::datafile::*;
 use crate::utils::*;
+use crate::logpointer::*;
+use serde::{Deserialize, Serialize};
 
 pub struct Log {
     pub active: ActiveFile,
@@ -39,9 +42,27 @@ impl Log {
         })
     }
 
-    pub fn set_passive(&mut self, passive: BTreeMap<u64, PassiveFile>) -> Result<()> {
-        self.passive = passive;
-        Ok(())
+    pub fn get_record<'a, T>(&mut self, log_ptr: &LogPointer) -> Result<T>
+        where
+            T: Deserialize<'a>
+    {
+        let offset = log_ptr.offset;
+
+        let reader = match log_ptr.file {
+            DataFile::Active => &mut self.active.reader,
+            DataFile::Passive(serial_number) => &mut self
+                .passive
+                .get_mut(&serial_number)
+                .unwrap()
+                .reader,
+        };
+
+        reader.seek(SeekFrom::Start(offset))?;
+
+        Ok(serde_json::Deserializer::from_reader(reader)
+            .into_iter()
+            .next()
+            .unwrap()?)
     }
 
     pub fn dump(&mut self) -> Result<()> {
@@ -63,6 +84,44 @@ impl Log {
         // Move old active file to passives and create new active
         self.passive.insert(serial_number, PassiveFile::new(new_path)?);
         self.active = ActiveFile::new(ACTIVE_FILE_NAME)?;
+        Ok(())
+    }
+
+    /// Replace old passive files by new ones. Old files will be deleted.
+    /// New files are compacted and created from unique records in the next way
+    /// 1. Split commands to chunks of `RECORDS_IN_COMPACTED` elements
+    /// 2. Write each chunk to new passive file in log directory.
+    /// 3. Collect passive files to BTreeMap and set it to `self.passive`.
+    pub fn compact(&mut self, mut records: Vec<Result<impl Serialize>>) -> Result<()> {
+        self.clear_passives()?;
+
+        let mut passive_files: BTreeMap<u64, PassiveFile> = BTreeMap::new();
+        let mut counter: u64 = 1; // serial number of passive file
+        let records = &mut records;
+        while !records.is_empty() {
+            let chunk = std::iter::from_fn(|| records.pop())
+                .take(RECORDS_IN_COMPACTED)
+                .collect::<Vec<_>>();
+
+            let mut path = self.dir_path.clone();
+            path.push(format!("{}.{}", counter, PASSIVE_EXT));
+
+            // New file on the fs will be created here with appropriated records
+            let passive_file = PassiveFile::from_records(chunk, path)?;
+            passive_files.insert(counter, passive_file);
+
+            counter += 1;
+        }
+
+        self.passive = passive_files;
+        Ok(())
+    }
+
+    fn clear_passives(&mut self) -> Result<()> {
+        for passive in &mut self.passive.values_mut() {
+            std::fs::remove_file(&mut passive.path)?;
+        }
+        self.passive.clear();
         Ok(())
     }
 }
