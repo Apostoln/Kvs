@@ -160,9 +160,7 @@ impl KvStore {
             .collect()
     }
 
-    fn index_datafile<T>(index: &mut Index, datafile: &mut T) -> Result<()>
-    where
-        T: DataFileGetter,
+    fn index_datafile(index: &mut Index, datafile: &mut impl DataFileGetter) -> Result<()>
     {
         let (path, reader) = datafile.get_inner();
         let mut pos = reader.seek(SeekFrom::Start(0))?;
