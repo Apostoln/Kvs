@@ -8,6 +8,7 @@ use crate::datafile::*;
 use crate::utils::*;
 use crate::logpointer::*;
 use serde::{Deserialize, Serialize};
+use log::{debug, info, warn, error};
 
 pub struct Log {
     pub active: ActiveFile,
@@ -21,12 +22,13 @@ impl Log {
             T: Into<std::path::PathBuf>,
     {
         let dir_path = dir_path.into();
+        debug!("Open Log, path: {:?}", dir_path);
         let passive_files = dir_path
             .read_dir()?
             .filter_map(std::result::Result::ok)
             .map(|file| file.path())
             .filter(|path| path.is_file() && path.extension().map_or(false, |ext| ext == PASSIVE_EXT))
-            .map(|path| -> Result<(u64, PassiveFile)>{
+            .map(|path| -> Result<(u64, PassiveFile)> {
                 Ok((get_serial_number(&path)?, PassiveFile::new(path)?))
             })
             .collect::<Result<_>>()?;
@@ -49,12 +51,18 @@ impl Log {
         let offset = log_ptr.offset;
 
         let reader = match log_ptr.file {
-            DataFile::Active => &mut self.active.reader,
-            DataFile::Passive(serial_number) => &mut self
-                .passive
-                .get_mut(&serial_number)
-                .unwrap()
-                .reader,
+            DataFile::Active => {
+                debug!("Get record of active file, offset: {}", offset);
+                &mut self.active.reader
+            },
+            DataFile::Passive(serial_number) => {
+                debug!("Get record of passive file #{}, offset: {}", serial_number, offset);
+                &mut self
+                    .passive
+                    .get_mut(&serial_number)
+                    .unwrap()
+                    .reader
+            },
         };
 
         reader.seek(SeekFrom::Start(offset))?;
@@ -66,8 +74,9 @@ impl Log {
     }
 
     pub fn dump(&mut self) -> Result<()> {
+        debug!("Dump Log");
         if self.active.reader.get_mut().metadata()?.len() == 0 {
-            // File is already empty, nothing to do here
+            debug!("File is already empty"); //Nothing to do here
             return Ok(());
         }
 
@@ -80,10 +89,13 @@ impl Log {
         let mut new_path = self.dir_path.clone();
         new_path.push(format!("{}.{}", serial_number, PASSIVE_EXT));
         fs::rename(&self.active.path, &mut new_path)?;
+        debug!("Move active file to {:?}", new_path);
 
         // Move old active file to passives and create new active
         self.passive.insert(serial_number, PassiveFile::new(new_path)?);
-        self.active = ActiveFile::new(ACTIVE_FILE_NAME)?;
+        let mut active_path = self.dir_path.clone();
+        active_path.push(ACTIVE_FILE_NAME);
+        self.active = ActiveFile::new(active_path)?;
         Ok(())
     }
 
@@ -93,6 +105,7 @@ impl Log {
     /// 2. Write each chunk to new passive file in log directory.
     /// 3. Collect passive files to BTreeMap and set it to `self.passive`.
     pub fn compact(&mut self, mut records: Vec<Result<impl Serialize>>) -> Result<()> {
+        debug!("Compact Log");
         self.clear_passives()?;
 
         let mut passive_files: BTreeMap<u64, PassiveFile> = BTreeMap::new();
@@ -112,12 +125,14 @@ impl Log {
 
             counter += 1;
         }
+        debug!("Created {} compacted passive files", counter);
 
         self.passive = passive_files;
         Ok(())
     }
 
     fn clear_passives(&mut self) -> Result<()> {
+        debug!("Clear passive files");
         for passive in &mut self.passive.values_mut() {
             std::fs::remove_file(&mut passive.path)?;
         }

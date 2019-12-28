@@ -3,6 +3,9 @@ use std::result;
 use failure::Fail;
 use serde_json;
 
+use log::error;
+
+
 #[derive(Fail, Debug)]
 pub enum KvError {
     #[fail(display = "Key not found")]
@@ -26,19 +29,25 @@ pub enum KvError {
 
 impl From<std::io::Error> for KvError {
     fn from(err: std::io::Error) -> KvError {
-        KvError::StorageFileError(err)
+        let res = KvError::StorageFileError(err);
+        error!("{}", res);
+        res
     }
 }
 
 impl From<serde_json::Error> for KvError {
     fn from(err: serde_json::Error) -> KvError {
-        KvError::SerdeError(err)
+        let res = KvError::SerdeError(err);
+        error!("{}", res);
+        res
     }
 }
 
 impl From<String> for KvError {
     fn from(err: String) -> KvError {
-        KvError::UnknownError(err)
+        let res = KvError::UnknownError(err);
+        error!("{}", res);
+        res
     }
 }
 

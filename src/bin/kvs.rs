@@ -1,6 +1,8 @@
 use kvs::{KvError, KvStore};
 use std::env;
 use structopt::StructOpt;
+use simplelog::*;
+use log::{debug, info, warn, error};
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "kvs")]
@@ -25,13 +27,16 @@ enum CliCommand {
 }
 
 fn main() -> kvs::Result<()> {
-    let mut storage = KvStore::open(env::current_dir()?)?;
+    TermLogger::init(LevelFilter::Debug, Config::default(), TerminalMode::Stderr).unwrap();
 
+    let mut storage = KvStore::open(env::current_dir()?)?;
     match CliCommand::from_args() {
         CliCommand::Set { key: k, value: v } => {
+            debug!("Set key: {}, value: {}", k, v);
             storage.set(k, v)?;
         }
         CliCommand::Get { key: k } => {
+            debug!("Get key: {}", k);
             println!(
                 "{}",
                 storage
@@ -40,6 +45,7 @@ fn main() -> kvs::Result<()> {
             );
         }
         CliCommand::Remove { key: k } => {
+            debug!("Remove key {}", k);
             storage.remove(k).map_err(|err| {
                 println!("{}", err);
                 err

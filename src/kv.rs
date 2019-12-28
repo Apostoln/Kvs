@@ -6,6 +6,7 @@ use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
 use serde_json;
+use log::{debug, info, warn, error};
 
 use crate::error::KvError::{KeyNotFound, UnexpectedCommand};
 use crate::log::Log;
@@ -37,6 +38,8 @@ impl KvStore {
         T: Into<std::path::PathBuf>,
     {
         let path = path.into();
+        debug!("Open KvStore, path: {:?}", path);
+
         let mut log = Log::open(&path)?;
         let index = KvStore::index(&mut log)?;
 
@@ -52,10 +55,13 @@ impl KvStore {
         where
             T: Into<std::path::PathBuf>,
     {
-        self.backups_dir = Some(path.into());
+        let path = path.into();
+        debug!("Set new backup directory: {:?}", path);
+        self.backups_dir = Some(path);
     }
 
     pub fn get(&mut self, key: String) -> Result<Option<String>> {
+        debug!("Get key: {}", key);
         let log = &mut self.log;
         self.index
             .get(&key)
@@ -70,6 +76,7 @@ impl KvStore {
     }
 
     pub fn set(&mut self, key: String, value: String) -> Result<()> {
+        debug!("Set key: {}, value: {}", key, value);
         let mut writer = &mut self.log.active.writer;
         let pos = writer.seek(SeekFrom::Current(0))?;
 
@@ -80,9 +87,13 @@ impl KvStore {
 
         if let Some(_) = self.index.insert(key, LogPointer { file: DataFile::Active, offset: pos }) {
             self.unused_records += 1;
+            debug!("Increased unused records: {}", self.unused_records);
         }
 
         if self.unused_records > RECORDS_LIMIT {
+            debug!("Unused records {} exceeds records limit {}. Compaction triggered",
+                   self.unused_records,
+                   RECORDS_LIMIT);
             self.compact_log()?;
             self.reindex()?;
             self.unused_records = 0;
@@ -92,6 +103,8 @@ impl KvStore {
     }
 
     pub fn remove(&mut self, key: String) -> Result<()> {
+        debug!("Remove key: {}", key);
+
         let mut writer = &mut self.log.active.writer;
 
         self.index.remove(&key).ok_or(KeyNotFound)?;
@@ -106,16 +119,19 @@ impl KvStore {
     }
 
     fn reindex(&mut self) -> Result<()> {
+        debug!("Reindex");
         self.index = KvStore::index(&mut self.log)?;
         Ok(())
     }
 
     fn compact_log(&mut self) -> Result<()> {
+        debug!("Compact log");
         self.log.dump()?;
         self.reindex()?;
 
         // Create backup if specified
         if let Some(backups_dir) = &self.backups_dir {
+            debug!("Backup triggered, backups directory: {:?}", backups_dir);
             let mut backup_dir = backups_dir.clone();
             let time = std::time::SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -137,6 +153,7 @@ impl KvStore {
     }
 
     fn backup(&mut self, mut backup_dir: &PathBuf) -> Result<()> {
+        debug!("Backup, path: {:?}", backup_dir);
         fs::create_dir(&mut backup_dir)?;
 
         for passive in self.log.passive.values_mut() {
@@ -148,6 +165,7 @@ impl KvStore {
     }
 
     fn actual_commands(&mut self) -> Vec<Result<Command>> {
+        debug!("Get actual commands");
         let log = &mut self.log;
         self.index
             .values()
@@ -163,6 +181,7 @@ impl KvStore {
     fn index_datafile(index: &mut Index, datafile: &mut impl DataFileGetter) -> Result<()>
     {
         let (path, reader) = datafile.get_inner();
+        debug!("Index datafile: {:?}", path);
         let mut pos = reader.seek(SeekFrom::Start(0))?;
         let mut stream = serde_json::Deserializer::from_reader(reader).into_iter();
         while let Some(item) = stream.next() {
@@ -180,6 +199,7 @@ impl KvStore {
     }
 
     fn index(log: &mut Log) -> Result<Index> {
+        debug!("Index log");
         let mut index = Index::new();
 
         for passive in &mut log.passive.values_mut() {
@@ -195,6 +215,7 @@ impl KvStore {
 
 impl Drop for KvStore {
     fn drop(&mut self) {
+        debug!("Drop KvStore");
         if let Err(e) = self.compact_log() {
             panic!("Error while dropping KvStore: {}", e);
         }

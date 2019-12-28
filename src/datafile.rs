@@ -4,6 +4,7 @@ use std::io::{BufReader, BufWriter, Write};
 
 use crate::error::Result;
 use serde::Serialize;
+use log::{debug, info, warn, error};
 
 pub trait DataFileGetter {
     fn get_inner(&mut self) -> (&PathBuf, &mut BufReader<File>);
@@ -21,6 +22,7 @@ impl PassiveFile {
             T: Into<std::path::PathBuf>,
     {
         let mut path = path.into();
+        debug!("Open passive file {:?}", path);
         let file = std::fs::OpenOptions::new()
             .read(true)
             .open(&mut path)?;
@@ -33,6 +35,7 @@ impl PassiveFile {
     ///
     /// Note: There must be no passive file with name `path` before calling this function
     pub fn from_records(records: Vec<Result<impl Serialize>>, mut path: PathBuf) -> Result<PassiveFile> {
+        debug!("Create new passive file {:?} from {} records", path, records.len());
         let file = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
@@ -69,6 +72,7 @@ impl ActiveFile {
             T: Into<std::path::PathBuf>,
     {
         let mut path = path.into();
+        debug!("Create active file: {:?}", path);
         let file = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
