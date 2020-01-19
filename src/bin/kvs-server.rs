@@ -45,16 +45,28 @@ fn main() -> kvs::Result<()> {
         debug!("Get request");
         match incoming_request {
             Request::Get {key} => {
-                match storage.get(key)? { //todo send error?
-                    Some(value) => {
-                        debug!("Get value: {}", value);
-                        let response = Response::Ok(Some(value));
-                        debug!("Send response: {:?}", response);
-                        serde_json::to_writer(tcp_writer, &response).unwrap();
+                match storage.get(key) {
+                    Ok(option_value) => {
+                        match option_value {
+                            Some(value) => {
+                                debug!("Get value: {}", value);
+                                let response = Response::Ok(Some(value));
+                                debug!("Send response: {:?}", response);
+                                serde_json::to_writer(tcp_writer, &response).unwrap();
+                            },
+                            None => {
+                                debug!("{}", KvError::KeyNotFound);
+                                let response = Response::Ok(None);
+                                debug!("Send response: {:?}", response);
+                                serde_json::to_writer(tcp_writer, &response).unwrap();
+                            },
+                        }
                     },
-                    None => {
-                        debug!("{}", KvError::KeyNotFound);
-                        let response = Response::Ok(None);
+                    Err(e) => {
+                        //todo avoid copy-paste
+                        let error_msg = format!("{}", e);
+                        warn!("KvStore error: {}", error_msg); //todo or error! ?
+                        let response = Response::Err(error_msg);
                         debug!("Send response: {:?}", response);
                         serde_json::to_writer(tcp_writer, &response).unwrap();
                     },
@@ -68,7 +80,13 @@ fn main() -> kvs::Result<()> {
                         debug!("Send response: {:?}", response);
                         serde_json::to_writer(tcp_writer, &response).unwrap();
                     },
-                    Err(e) => return Err(e),
+                    Err(e) => {
+                        let error_msg = format!("{}", e);
+                        warn!("KvStore error: {}", error_msg); //todo or error! ?
+                        let response = Response::Err(error_msg);
+                        debug!("Send response: {:?}", response);
+                        serde_json::to_writer(tcp_writer, &response).unwrap();
+                    },
                 }
             },
             Request::Rm {key} => {
@@ -79,7 +97,13 @@ fn main() -> kvs::Result<()> {
                         debug!("Send response: {:?}", response);
                         serde_json::to_writer(tcp_writer, &response).unwrap();
                     },
-                    Err(e) => return Err(e),
+                    Err(e) => {
+                        let error_msg = format!("{}", e);
+                        warn!("KvStore error: {}", error_msg); //todo or error! ?
+                        let response = Response::Err(error_msg);
+                        debug!("Send response: {:?}", response);
+                        serde_json::to_writer(tcp_writer, &response).unwrap();
+                    },
                 }
             }
         }

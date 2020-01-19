@@ -42,5 +42,5 @@ fn main() {
     let port = 4000;
     let server_addr = format!("{}:{}", ip, port);
 
-    get(server_addr);
+    rm(server_addr);
 }

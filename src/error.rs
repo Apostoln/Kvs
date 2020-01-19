@@ -9,7 +9,7 @@ use log::error;
 #[derive(Fail, Debug)]
 pub enum KvError {
     #[fail(display = "Key not found")]
-    KeyNotFound,
+    KeyNotFound, // Use in case of removing key, otherwise use Option::None
 
     #[fail(display = "Storage File Error: {}", _0)]
     StorageFileError(#[cause] std::io::Error),
