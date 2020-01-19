@@ -1,11 +1,13 @@
 use std::net::{SocketAddr, TcpListener};
-use std::io::{Read, Write};
+use std::io::{Read, Write, BufReader, BufWriter};
 use std::env;
 use structopt::StructOpt;
 use simplelog::*;
 use log::{debug, info, warn, error};
+use serde::de::Deserialize;
 
 use kvs::{KvError, KvStore};
+use kvs::{Request, Response};
 
 const DEFAULT_ADDRESS: &'static str = "127.0.0.1:4000";
 
@@ -35,50 +37,52 @@ fn main() -> kvs::Result<()> {
         let remote_addr = stream.peer_addr().unwrap().to_string();
         debug!("Accept client {}", remote_addr);
 
-        let read_size = stream.read(&mut buffer).unwrap();
-        let content = std::str::from_utf8(&buffer[0..read_size]).unwrap().trim_end();
-        debug!("Read {} bytes: {}", read_size, content);
+        let tcp_reader = BufReader::new(&stream);
+        let mut tcp_writer = BufWriter::new(&stream);
+        let mut deserializer = serde_json::Deserializer::from_reader(tcp_reader);
+        let incoming_request = Request::deserialize(&mut deserializer)?; //todo error handling
 
-        let content = content
-            .split_whitespace()
-            .collect::<Vec<_>>();
-
-        if content.len() == 0 {
-            error!("Uncorrect request from client");
-            continue;
-        }
-        else if content.starts_with(&["g"]) {
-            if let Some(&key) = content.last() {
-                match storage.get(key.to_owned())? {
-                    Some(value) => debug!("Get value: {}", value),
-                    None => debug!("{}", KvError::KeyNotFound),
+        debug!("Get request");
+        match incoming_request {
+            Request::Get {key} => {
+                match storage.get(key)? { //todo send error?
+                    Some(value) => {
+                        debug!("Get value: {}", value);
+                        let response = Response::Ok(Some(value));
+                        debug!("Send response: {:?}", response);
+                        serde_json::to_writer(tcp_writer, &response).unwrap();
+                    },
+                    None => {
+                        debug!("{}", KvError::KeyNotFound);
+                        let response = Response::Ok(None);
+                        debug!("Send response: {:?}", response);
+                        serde_json::to_writer(tcp_writer, &response).unwrap();
+                    },
+                }
+            },
+            Request::Set {key, value} => {
+                debug!("Set key: {}, value: {}", key, value);
+                match storage.set(key, value) {
+                    Ok(_) => {
+                        let response = Response::Ok(None);
+                        debug!("Send response: {:?}", response);
+                        serde_json::to_writer(tcp_writer, &response).unwrap();
+                    },
+                    Err(e) => return Err(e),
+                }
+            },
+            Request::Rm {key} => {
+                debug!("Remove key: {}", key);
+                match storage.remove(key) {
+                    Ok(_) => {
+                        let response = Response::Ok(None);
+                        debug!("Send response: {:?}", response);
+                        serde_json::to_writer(tcp_writer, &response).unwrap();
+                    },
+                    Err(e) => return Err(e),
                 }
             }
         }
-        else if content.starts_with(&["s"]) {
-            if let (Some(&key), Some(&value)) = (content.get(1), content.get(2)) {
-                storage.set(key.to_owned(),value.to_owned())?;
-                debug!("Set key: {}, value: {}", key, value);
-            }
-        }
-        else if content.starts_with(&["r"]) {
-            if let Some(&key) = content.last() {
-                storage.remove(key.to_owned())?;
-                debug!("Remove key: {}", key);
-            }
-        }
-        else if content.starts_with(&["c"]) {
-            info!("Shutdown server by remote request");
-            return Ok(());
-        }
-        else {
-            error!("Uncorrect request from client");
-            continue;
-        }
-
-        let written_size = stream.write(&mut buffer[0..read_size]).unwrap();
-        debug!("Write {} bytes: {}", written_size, std::str::from_utf8(&buffer[0..written_size]).unwrap().trim_end());
-        stream.flush().unwrap();
     }
 
     Ok(())

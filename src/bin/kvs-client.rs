@@ -1,31 +1,38 @@
 use std::net::TcpStream;
 use simplelog::*;
 use log::{debug, info, warn, error};
-use std::io::{Write, Read};
+use std::io::{Write, Read, BufWriter, BufReader};
 
-fn request(server_addr: String, msg: &str) {
+use kvs::{Request, Response};
+
+fn request(server_addr: String, req: Request) {
     info!("Trying to connect to server at {}", server_addr);
 
     let mut stream = TcpStream::connect(server_addr).unwrap();
+    let reader = BufReader::new(&stream);
+    let mut writer = BufWriter::new(&stream);
     info!("Client started at {}", stream.local_addr().unwrap());
-    stream.write(msg.as_ref()).unwrap();
-    stream.flush().unwrap();
-
-    let mut buffer = [0; 512];
-    let size = stream.read(&mut buffer).unwrap();
-    debug!("Answer: {}", std::str::from_utf8(&buffer[0..size]).unwrap());
-
-    stream.shutdown(std::net::Shutdown::Both);
+    info!("Send request: {:?}", req);
+    serde_json::to_writer(&mut writer, &req).unwrap();
+    writer.flush().unwrap();
+    info!("Read response");
+    let response: Response = serde_json::from_reader(reader).unwrap();
+    info!("Response: {:?}", response);
 }
 
-fn shutdown_server(server_addr: String) {
-    info!("Trying to shutdown server at {}", server_addr);
+fn get(server_addr: String) {
+    let req = Request::Get {key: "foo".to_owned()};
+    request(server_addr, req);
+}
 
-    let mut stream = TcpStream::connect(server_addr).unwrap();
-    info!("Client started at {}", stream.local_addr().unwrap());
-    let msg = "c";
-    stream.write(msg.as_ref()).unwrap();
-    stream.flush().unwrap();
+fn set(server_addr: String) {
+    let req = Request::Set {key: "newkey".to_owned(), value: "newvalue".to_owned()};
+    request(server_addr, req);
+}
+
+fn rm(server_addr: String) {
+    let req = Request::Rm {key: "missingkey".to_owned()};
+    request(server_addr, req);
 }
 
 fn main() {
@@ -35,7 +42,5 @@ fn main() {
     let port = 4000;
     let server_addr = format!("{}:{}", ip, port);
 
-    let msg = "s k2 v2";
-    request(server_addr.clone(), msg);
-    shutdown_server(server_addr);
+    get(server_addr);
 }
