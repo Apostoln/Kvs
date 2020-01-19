@@ -22,6 +22,20 @@ struct ServerArgs {
     addr: SocketAddr,
 }
 
+fn send_error<W: Write>(writer: W, error: KvError) {
+    let error_msg = format!("{}", error);
+    warn!("KvStore error: {}", error_msg);
+    let response = Response::Err(error_msg);
+    debug!("Send response: {:?}", response);
+    serde_json::to_writer(writer, &response).unwrap();
+}
+
+fn send_ok<W: Write>(writer: W, value: Option<String>) {
+    let response = Response::Ok(value);
+    debug!("Send response: {:?}", response);
+    serde_json::to_writer(writer, &response).unwrap();
+}
+
 fn main() -> kvs::Result<()> {
     TermLogger::init(LevelFilter::Debug, Config::default(), TerminalMode::Stderr).unwrap();
 
@@ -45,65 +59,29 @@ fn main() -> kvs::Result<()> {
         debug!("Get request");
         match incoming_request {
             Request::Get {key} => {
+                debug!("Get key: {}", key);
                 match storage.get(key) {
                     Ok(option_value) => {
-                        match option_value {
-                            Some(value) => {
-                                debug!("Get value: {}", value);
-                                let response = Response::Ok(Some(value));
-                                debug!("Send response: {:?}", response);
-                                serde_json::to_writer(tcp_writer, &response).unwrap();
-                            },
-                            None => {
-                                debug!("{}", KvError::KeyNotFound);
-                                let response = Response::Ok(None);
-                                debug!("Send response: {:?}", response);
-                                serde_json::to_writer(tcp_writer, &response).unwrap();
-                            },
+                        if option_value.is_none() {
+                            debug!("{}", KvError::KeyNotFound);
                         }
+                        send_ok(tcp_writer, option_value);
                     },
-                    Err(e) => {
-                        //todo avoid copy-paste
-                        let error_msg = format!("{}", e);
-                        warn!("KvStore error: {}", error_msg); //todo or error! ?
-                        let response = Response::Err(error_msg);
-                        debug!("Send response: {:?}", response);
-                        serde_json::to_writer(tcp_writer, &response).unwrap();
-                    },
+                    Err(e) => send_error(tcp_writer, e),
                 }
             },
             Request::Set {key, value} => {
                 debug!("Set key: {}, value: {}", key, value);
                 match storage.set(key, value) {
-                    Ok(_) => {
-                        let response = Response::Ok(None);
-                        debug!("Send response: {:?}", response);
-                        serde_json::to_writer(tcp_writer, &response).unwrap();
-                    },
-                    Err(e) => {
-                        let error_msg = format!("{}", e);
-                        warn!("KvStore error: {}", error_msg); //todo or error! ?
-                        let response = Response::Err(error_msg);
-                        debug!("Send response: {:?}", response);
-                        serde_json::to_writer(tcp_writer, &response).unwrap();
-                    },
+                    Ok(_) => send_ok(tcp_writer, None),
+                    Err(e) => send_error(tcp_writer, e),
                 }
             },
             Request::Rm {key} => {
                 debug!("Remove key: {}", key);
                 match storage.remove(key) {
-                    Ok(_) => {
-                        let response = Response::Ok(None);
-                        debug!("Send response: {:?}", response);
-                        serde_json::to_writer(tcp_writer, &response).unwrap();
-                    },
-                    Err(e) => {
-                        let error_msg = format!("{}", e);
-                        warn!("KvStore error: {}", error_msg); //todo or error! ?
-                        let response = Response::Err(error_msg);
-                        debug!("Send response: {:?}", response);
-                        serde_json::to_writer(tcp_writer, &response).unwrap();
-                    },
+                    Ok(_) => send_ok(tcp_writer, None),
+                    Err(e) => send_error(tcp_writer, e),
                 }
             }
         }
