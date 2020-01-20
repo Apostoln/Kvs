@@ -1,11 +1,9 @@
-use std::net::{TcpStream, SocketAddr};
+use std::net::SocketAddr;
 use simplelog::*;
-use log::{debug, info, warn, error};
-use std::io::{Write, Read, BufWriter, BufReader};
+use log::{debug, error};
 use structopt::StructOpt;
-use failure::Fail;
 
-use kvs::{Request, Response, KvError};
+use kvs::{Response, KvError, Client, ClientError};
 use std::process::exit;
 
 const DEFAULT_SERVER_ADDRESS: &'static str = "127.0.0.1:4000";
@@ -45,68 +43,8 @@ enum Command {
     }
 }
 
-#[derive(Fail, Debug)]
-enum ClientError { //todo avoid duplicate with ServerError
-    #[fail(display = "IO Error: {}", _0)]
-    IoError(#[cause] std::io::Error),
-
-    #[fail(display = "Serde Error: {}", _0)]
-    SerdeError(#[cause] serde_json::Error),
-
-    #[fail(display = "Unknown Error: {}", _0)]
-    UnknownError(String),
-}
-
-impl From<std::io::Error> for ClientError {
-    fn from(err: std::io::Error) -> ClientError {
-        let res = ClientError::IoError(err);
-        error!("{}", res);
-        res
-    }
-}
-
-impl From<serde_json::Error> for ClientError {
-    fn from(err: serde_json::Error) -> ClientError {
-        let res = ClientError::SerdeError(err);
-        error!("{}", res);
-        res
-    }
-}
-
-impl From<String> for ClientError {
-    fn from(err: String) -> ClientError {
-        let res = ClientError::UnknownError(err);
-        error!("{}", res);
-        res
-    }
-}
-
-fn request(server_addr: SocketAddr, req: Request) -> Response {
-    match request_impl(server_addr, req) {
-        Ok(response) => return response,
-        Err(e) => {
-            error!("{}", e);
-            exit(-4);
-        }
-    }
-}
-
-fn request_impl(server_addr: SocketAddr, req: Request) -> Result<Response, ClientError> {
-    debug!("Request: {:?}", req);
-    debug!("Trying to connect to server at {}", server_addr);
-    let mut stream = TcpStream::connect(server_addr)?;
-    let reader = BufReader::new(&stream);
-    let mut writer = BufWriter::new(&stream);
-    debug!("Client started at {}", stream.local_addr()?);
-    debug!("Send request: {:?}", req);
-    serde_json::to_writer(&mut writer, &req)?;
-    writer.flush()?;
-    Ok(serde_json::from_reader(reader)?)
-}
-
-fn get(server_addr: SocketAddr, key: String) {
-    let req = Request::Get {key};
-    let response = request(server_addr, req);
+fn get(client: Client, key: String) -> Result<(), ClientError> {
+    let response = client.get(key)?;
     debug!("Response: {:?}", response);
     match response {
         Response::Ok(option_value) => {
@@ -120,27 +58,28 @@ fn get(server_addr: SocketAddr, key: String) {
             exit(-1);
         }
     }
+    Ok(())
 }
 
-fn set(server_addr: SocketAddr, key: String, value: String) {
-    let req = Request::Set {key, value};
-    let response = request(server_addr, req);
+fn set(client: Client, key: String, value: String) -> Result<(), ClientError> {
+    let response = client.set(key, value)?;
     debug!("Response: {:?}", response);
     if let Response::Err(e) = response {
         error!("{}", e);
         exit(-2);
     }
+    Ok(())
 }
 
-fn rm(server_addr: SocketAddr, key: String) {
-    let req = Request::Rm {key};
-    let response = request(server_addr, req);
+fn rm(client: Client, key: String) -> Result<(), ClientError>{
+    let response = client.rm(key)?;
     debug!("Response: {:?}", response);
     match response {
-        Response::Ok(_) => {},
+        Response::Ok(_) => Ok(()),
         Response::Err(what) => {
             if what == format!("{}", KvError::KeyNotFound) {
                 eprintln!("{}", KvError::KeyNotFound); //todo use KvError instead of String
+                Ok(())
             }
             else {
                 error!("{}", what);
@@ -156,10 +95,17 @@ fn main() {
         .expect("Error while initializing of TermLogger");;
 
     let server_addr = ClientArgs::from_args().addr;
+    let client = Client::new(server_addr);
+
     let cmd = ClientArgs::from_args().cmd;
-    match cmd {
-        Command::Get{key} => get(server_addr, key),
-        Command::Set{key, value} => set(server_addr, key, value),
-        Command::Rm{key} => rm(server_addr, key),
+    let res = match cmd {
+        Command::Get{key} => get(client, key),
+        Command::Set{key, value} => set(client, key, value),
+        Command::Rm{key} => rm(client, key),
+    };
+
+    if let Err(e) = res {
+        error!("{}", e);
+        exit(-4);
     }
 }
