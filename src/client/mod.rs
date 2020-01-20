@@ -1,3 +1,3 @@
-pub use client::{Client, ClientError};
+pub use client::Client;
 
 mod client;

@@ -1,3 +1,3 @@
-pub use server::{Server, ServerError};
+pub use server::Server;
 
 mod server;

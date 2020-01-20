@@ -3,7 +3,7 @@ use simplelog::*;
 use log::{debug, error};
 use structopt::StructOpt;
 
-use kvs::{Response, KvError, Client, ClientError};
+use kvs::{Response, KvError, Client, ProtocolError};
 use std::process::exit;
 
 const DEFAULT_SERVER_ADDRESS: &'static str = "127.0.0.1:4000";
@@ -43,7 +43,7 @@ enum Command {
     }
 }
 
-fn get(client: Client, key: String) -> Result<(), ClientError> {
+fn get(client: Client, key: String) -> Result<(), ProtocolError> {
     let response = client.get(key)?;
     debug!("Response: {:?}", response);
     match response {
@@ -61,7 +61,7 @@ fn get(client: Client, key: String) -> Result<(), ClientError> {
     Ok(())
 }
 
-fn set(client: Client, key: String, value: String) -> Result<(), ClientError> {
+fn set(client: Client, key: String, value: String) -> Result<(), ProtocolError> {
     let response = client.set(key, value)?;
     debug!("Response: {:?}", response);
     if let Response::Err(e) = response {
@@ -71,7 +71,7 @@ fn set(client: Client, key: String, value: String) -> Result<(), ClientError> {
     Ok(())
 }
 
-fn rm(client: Client, key: String) -> Result<(), ClientError>{
+fn rm(client: Client, key: String) -> Result<(), ProtocolError>{
     let response = client.rm(key)?;
     debug!("Response: {:?}", response);
     match response {

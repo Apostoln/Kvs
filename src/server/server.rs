@@ -10,45 +10,9 @@ use log::{debug, info, warn, error};
 use failure::Fail;
 
 use crate::{KvStore, KvError};
-use crate::{Request, Response};
+use crate::{Request, Response, ProtocolError};
 
-#[derive(Fail, Debug)]
-pub enum ServerError{
-    #[fail(display = "IO Error: {}", _0)]
-    IoError(#[cause] std::io::Error),
-
-    #[fail(display = "Serde Error: {}", _0)]
-    SerdeError(#[cause] serde_json::Error),
-
-    #[fail(display = "Unknown Error: {}", _0)]
-    UnknownError(String),
-}
-
-impl From<io::Error> for ServerError {
-    fn from(err: std::io::Error) -> ServerError {
-        let res = ServerError::IoError(err);
-        error!("{}", res);
-        res
-    }
-}
-
-impl From<serde_json::Error> for ServerError {
-    fn from(err: serde_json::Error) -> ServerError {
-        let res = ServerError::SerdeError(err);
-        error!("{}", res);
-        res
-    }
-}
-
-impl From<String> for ServerError {
-    fn from(err: String) -> ServerError {
-        let res = ServerError::UnknownError(err);
-        error!("{}", res);
-        res
-    }
-}
-
-fn send_error<W: Write>(writer: W, error: KvError) -> Result<(), ServerError> {
+fn send_error<W: Write>(writer: W, error: KvError) -> Result<(), ProtocolError> {
     let error_msg = format!("{}", error);
     warn!("KvStore error: {}", error_msg);
     let response = Response::Err(error_msg);
@@ -56,7 +20,7 @@ fn send_error<W: Write>(writer: W, error: KvError) -> Result<(), ServerError> {
     Ok(serde_json::to_writer(writer, &response)?)
 }
 
-fn send_ok<W: Write>(writer: W, value: Option<String>) -> Result<(), ServerError>{
+fn send_ok<W: Write>(writer: W, value: Option<String>) -> Result<(), ProtocolError>{
     let response = Response::Ok(value);
     debug!("Send response: {:?}", response);
     Ok(serde_json::to_writer(writer, &response)?)
@@ -71,7 +35,7 @@ impl Server {
         Server {addr}
     }
 
-    pub fn run(&self, mut storage: KvStore) -> Result<(), ServerError> {
+    pub fn run(&self, mut storage: KvStore) -> Result<(), ProtocolError> {
         let interrupt = Arc::new(AtomicBool::new(false));
         let interrupt_clone = interrupt.clone();
 
