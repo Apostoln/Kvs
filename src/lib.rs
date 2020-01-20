@@ -1,6 +1,7 @@
 pub use error::{KvError, Result};
 pub use kv::KvStore;
 pub use protocol::{Request, Response};
+pub use server::{Server, ServerError};
 
 mod error;
 mod kv;
@@ -9,3 +10,4 @@ mod logpointer;
 mod datafile;
 mod utils;
 mod protocol;
+mod server;
