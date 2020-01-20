@@ -22,6 +22,13 @@ struct ClientArgs {
 
     #[structopt(subcommand)]
     cmd: Command,
+
+    #[structopt(
+        short,
+        long,
+        default_value = "DEBUG",
+        parse(try_from_str))]
+    logging: LevelFilter,
 }
 
 #[derive(Debug, StructOpt)]
@@ -144,7 +151,8 @@ fn rm(server_addr: SocketAddr, key: String) {
 }
 
 fn main() {
-    TermLogger::init(LevelFilter::Debug, Config::default(), TerminalMode::Stderr)
+    let log_filter = ClientArgs::from_args().logging;
+    TermLogger::init(log_filter, Config::default(), TerminalMode::Stderr)
         .expect("Error while initializing of TermLogger");;
 
     let server_addr = ClientArgs::from_args().addr;
