@@ -1,5 +1,6 @@
 use std::net::{SocketAddr, TcpListener};
 use std::io::{Read, Write, BufReader, BufWriter};
+use std::io;
 use std::env;
 use structopt::StructOpt;
 use simplelog::*;
@@ -9,6 +10,8 @@ use failure::Fail;
 
 use kvs::{KvError, KvStore};
 use kvs::{Request, Response};
+use std::sync::Arc;
+use failure::_core::sync::atomic::{AtomicBool, Ordering};
 
 const DEFAULT_ADDRESS: &'static str = "127.0.0.1:4000";
 
@@ -76,12 +79,30 @@ fn send_ok<W: Write>(writer: W, value: Option<String>) -> Result<(), ServerError
 }
 
 fn run(addr: SocketAddr, mut storage: KvStore) -> Result<(), ServerError> {
+    let interrupt = Arc::new(AtomicBool::new(false));
+    let i = interrupt.clone();
+
+    ctrlc::set_handler(move || {
+        debug!("SIGINT");
+        i.store(true, Ordering::SeqCst);
+    }).expect("Error setting SIGINT handler");
+
     info!("Server started on {}", addr);
     let tcp_listener = TcpListener::bind(addr)?;
+    tcp_listener.set_nonblocking(true)?;
 
-    let mut buffer = [0; 512];
     for stream in tcp_listener.incoming() {
-        let mut stream = stream?;
+        if interrupt.load(Ordering::SeqCst) {
+            debug!("Stop server");
+            break;
+        }
+
+        let mut stream = match stream {
+            Ok(s) => s,
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+            Err(_) => stream?,
+        };
+
         let remote_addr = stream.peer_addr()?.to_string();
         debug!("Accept client {}", remote_addr);
 
