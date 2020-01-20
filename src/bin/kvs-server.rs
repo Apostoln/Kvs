@@ -24,6 +24,13 @@ struct ServerArgs {
         default_value = DEFAULT_ADDRESS,
         parse(try_from_str))]
     addr: SocketAddr,
+
+    #[structopt(
+        short,
+        long,
+        default_value = "DEBUG",
+        parse(try_from_str))]
+    logging: LevelFilter,
 }
 
 #[derive(Fail, Debug)]
@@ -146,7 +153,8 @@ fn run(addr: SocketAddr, mut storage: KvStore) -> Result<(), ServerError> {
 }
 
 fn main() {
-    TermLogger::init(LevelFilter::Debug, Config::default(), TerminalMode::Stderr)
+    let log_level = ServerArgs::from_args().logging;
+    TermLogger::init(log_level, Config::default(), TerminalMode::Stderr)
         .expect("Error while initializing of TermLogger");
 
     let current_dir = env::current_dir()
