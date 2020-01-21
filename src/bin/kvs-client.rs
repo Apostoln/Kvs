@@ -1,10 +1,12 @@
 use std::net::SocketAddr;
+use std::process::exit;
+
 use simplelog::*;
 use log::{debug, error};
 use structopt::StructOpt;
 
-use kvs::{Response, KvError, Client, ProtocolError};
-use std::process::exit;
+use kvs::protocol::{Response, ProtocolError};
+use kvs::{Client, KvError};
 
 const DEFAULT_SERVER_ADDRESS: &'static str = "127.0.0.1:4000";
 

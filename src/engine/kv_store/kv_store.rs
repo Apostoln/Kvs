@@ -8,12 +8,14 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 use log::{debug, info, warn, error};
 
-use crate::error::KvError::{KeyNotFound, UnexpectedCommand};
-use crate::log::Log;
-use crate::logpointer::*;
-use crate::datafile::*;
-
-pub use crate::error::{KvError, Result};
+use crate::engine::{
+    KvError::KeyNotFound,
+    KvError::UnexpectedCommand,
+    Result,
+};
+use super::log::Log;
+use super::logpointer::*;
+use super::datafile::*;
 
 const RECORDS_LIMIT: u64 = 100;
 

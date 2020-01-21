@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::error::{Result, KvError};
+use crate::engine::{Result, KvError};
 
 pub const ACTIVE_FILE_NAME: &'static str = "log.active";
 pub const PASSIVE_EXT: &'static str = "passive";

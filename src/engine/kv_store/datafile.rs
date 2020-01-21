@@ -2,9 +2,10 @@ use std::path::PathBuf;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
 
-use crate::error::Result;
 use serde::Serialize;
 use log::{debug, info, warn, error};
+
+use crate::engine::Result;
 
 pub trait DataFileGetter {
     fn get_inner(&mut self) -> (&PathBuf, &mut BufReader<File>);

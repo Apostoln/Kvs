@@ -3,12 +3,13 @@ use std::path::PathBuf;
 use std::io::{Seek, SeekFrom};
 use std::fs;
 
-use crate::error::Result;
-use crate::datafile::*;
-use crate::utils::*;
-use crate::logpointer::*;
 use serde::{Deserialize, Serialize};
-use log::{debug, info, warn, error};
+use log::debug;
+
+use crate::engine::Result;
+use super::datafile::*;
+use super::utils::*;
+use super::logpointer::*;
 
 pub struct Log {
     pub active: ActiveFile,
