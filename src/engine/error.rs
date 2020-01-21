@@ -1,9 +1,11 @@
 use std::result;
+use std::string::FromUtf8Error;
 
 use failure::Fail;
 use serde_json;
-
 use log::error;
+use sled;
+
 
 
 #[derive(Fail, Debug)]
@@ -23,6 +25,12 @@ pub enum KvError {
     #[fail(display = "Invalid name of datafile")]
     InvalidDatafileName,
 
+    #[fail(display = "Sled error: {}", _0)]
+    SledError(#[cause] sled::Error),
+
+    #[fail(display = "Encoding error: {}", _0)]
+    EncodingError(#[cause] FromUtf8Error),
+
     #[fail(display = "Unknown Error: {}", _0)]
     UnknownError(String),
 }
@@ -38,6 +46,22 @@ impl From<std::io::Error> for KvError {
 impl From<serde_json::Error> for KvError {
     fn from(err: serde_json::Error) -> KvError {
         let res = KvError::SerdeError(err);
+        error!("{}", res);
+        res
+    }
+}
+
+impl From<sled::Error> for KvError {
+    fn from(err: sled::Error) -> KvError {
+        let res = KvError::SledError(err);
+        error!("{}", res);
+        res
+    }
+}
+
+impl From<FromUtf8Error> for KvError {
+    fn from(err: FromUtf8Error) -> KvError {
+        let res = KvError::EncodingError(err);
         error!("{}", res);
         res
     }

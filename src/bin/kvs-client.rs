@@ -94,7 +94,7 @@ fn rm(client: Client, key: String) -> Result<(), ProtocolError>{
 fn main() {
     let log_filter = ClientArgs::from_args().logging;
     TermLogger::init(log_filter, Config::default(), TerminalMode::Stderr)
-        .expect("Error while initializing of TermLogger");;
+        .expect("Error while initializing of TermLogger");
 
     let server_addr = ClientArgs::from_args().addr;
     let client = Client::new(server_addr);
