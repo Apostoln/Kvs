@@ -10,6 +10,7 @@ use log::{debug, info, warn, error};
 use failure::Fail;
 
 use crate::{KvStore, KvError};
+use crate::engine::KvsEngine;
 use crate::protocol::{Request, Response, ProtocolError};
 
 fn send_error<W: Write>(writer: W, error: KvError) -> Result<(), ProtocolError> {

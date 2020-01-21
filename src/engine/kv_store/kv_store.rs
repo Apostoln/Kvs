@@ -9,6 +9,7 @@ use serde_json;
 use log::{debug, info, warn, error};
 
 use crate::engine::{
+    KvsEngine,
     KvError::KeyNotFound,
     KvError::UnexpectedCommand,
     Result,
@@ -60,64 +61,6 @@ impl KvStore {
         let path = path.into();
         debug!("Set new backup directory: {:?}", path);
         self.backups_dir = Some(path);
-    }
-
-    pub fn get(&mut self, key: String) -> Result<Option<String>> {
-        debug!("Get key: {}", key);
-        let log = &mut self.log;
-        self.index
-            .get(&key)
-            .map_or(
-                Ok(None),
-                |log_ptr| {
-                    match log.get_record(log_ptr)? {
-                        Command::Set { value, .. } => Ok(Some(value)),
-                        Command::Remove { .. } => Err(UnexpectedCommand),
-            }
-        })
-    }
-
-    pub fn set(&mut self, key: String, value: String) -> Result<()> {
-        debug!("Set key: {}, value: {}", key, value);
-        let mut writer = &mut self.log.active.writer;
-        let pos = writer.seek(SeekFrom::Current(0))?;
-
-        let cmd = Command::Set { key: key.clone(), value };
-
-        serde_json::to_writer(&mut writer, &cmd)?;
-        writer.flush()?;
-
-        if let Some(_) = self.index.insert(key, LogPointer { file: DataFile::Active, offset: pos }) {
-            self.unused_records += 1;
-            debug!("Increased unused records: {}", self.unused_records);
-        }
-
-        if self.unused_records > RECORDS_LIMIT {
-            debug!("Unused records {} exceeds records limit {}. Compaction triggered",
-                   self.unused_records,
-                   RECORDS_LIMIT);
-            self.compact_log()?;
-            self.reindex()?;
-            self.unused_records = 0;
-        }
-
-        Ok(())
-    }
-
-    pub fn remove(&mut self, key: String) -> Result<()> {
-        debug!("Remove key: {}", key);
-
-        let mut writer = &mut self.log.active.writer;
-
-        self.index.remove(&key).ok_or(KeyNotFound)?;
-
-        let cmd = Command::Remove { key };
-
-        serde_json::to_writer(&mut writer, &cmd)?;
-        writer.flush()?;
-
-        self.unused_records += 1;
-        Ok(())
     }
 
     fn reindex(&mut self) -> Result<()> {
@@ -212,6 +155,66 @@ impl KvStore {
         KvStore::index_datafile(&mut index, active)?;
 
         Ok(index)
+    }
+}
+
+impl KvsEngine for KvStore {
+    fn get(&mut self, key: String) -> Result<Option<String>> {
+        debug!("Get key: {}", key);
+        let log = &mut self.log;
+        self.index
+            .get(&key)
+            .map_or(
+                Ok(None),
+                |log_ptr| {
+                    match log.get_record(log_ptr)? {
+                        Command::Set { value, .. } => Ok(Some(value)),
+                        Command::Remove { .. } => Err(UnexpectedCommand),
+                    }
+                })
+    }
+
+    fn set(&mut self, key: String, value: String) -> Result<()> {
+        debug!("Set key: {}, value: {}", key, value);
+        let mut writer = &mut self.log.active.writer;
+        let pos = writer.seek(SeekFrom::Current(0))?;
+
+        let cmd = Command::Set { key: key.clone(), value };
+
+        serde_json::to_writer(&mut writer, &cmd)?;
+        writer.flush()?;
+
+        if let Some(_) = self.index.insert(key, LogPointer { file: DataFile::Active, offset: pos }) {
+            self.unused_records += 1;
+            debug!("Increased unused records: {}", self.unused_records);
+        }
+
+        if self.unused_records > RECORDS_LIMIT {
+            debug!("Unused records {} exceeds records limit {}. Compaction triggered",
+                   self.unused_records,
+                   RECORDS_LIMIT);
+            self.compact_log()?;
+            self.reindex()?;
+            self.unused_records = 0;
+        }
+
+        Ok(())
+    }
+
+    fn remove(&mut self, key: String) -> Result<()> {
+        debug!("Remove key: {}", key);
+
+        let mut writer = &mut self.log.active.writer;
+
+        self.index.remove(&key).ok_or(KeyNotFound)?;
+
+        let cmd = Command::Remove { key };
+
+        serde_json::to_writer(&mut writer, &cmd)?;
+        writer.flush()?;
+
+        self.unused_records += 1;
+        Ok(())
     }
 }
 

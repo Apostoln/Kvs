@@ -4,6 +4,8 @@ use structopt::StructOpt;
 use simplelog::*;
 use log::{debug, info, warn, error};
 
+use kvs::KvsEngine;
+
 #[derive(Debug, StructOpt)]
 #[structopt(name = "kvs")]
 enum CliCommand {

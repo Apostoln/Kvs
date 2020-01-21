@@ -1,4 +1,4 @@
-pub use engine::{KvError, Result};
+pub use engine::{KvsEngine, KvError, Result};
 pub use engine::kv_store::KvStore;
 pub use server::Server;
 pub use client::Client;
