@@ -36,7 +36,7 @@ impl Server {
         Server {addr}
     }
 
-    pub fn run(&self, mut storage: KvStore) -> Result<(), ProtocolError> {
+    pub fn run(&self, mut storage: &mut dyn KvsEngine) -> Result<(), ProtocolError> {
         let interrupt = Arc::new(AtomicBool::new(false));
         let interrupt_clone = interrupt.clone();
 

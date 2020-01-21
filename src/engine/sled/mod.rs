@@ -3,12 +3,12 @@ use crate::{KvsEngine, Result, KvError};
 use sled;
 use sled::{Tree, Db};
 
-struct SledEngine {
+pub struct SledEngine {
     db: Db,
 }
 
 impl SledEngine {
-    fn open<T>(path: T) -> Result<SledEngine>
+    pub fn open<T>(path: T) -> Result<SledEngine>
     where
         T: Into<std::path::PathBuf>,
     {
@@ -41,4 +41,3 @@ impl KvsEngine for SledEngine {
         Ok(())
     }
 }
-
