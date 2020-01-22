@@ -47,19 +47,46 @@ arg_enum! {
     }
 }
 
-fn current_engine<T>(path: T) -> Option<Engine>
+/// Read current engine from engine_file
+fn current_engine<T>(engine_file: T) -> Option<Engine>
     where
         T: Into<std::path::PathBuf>,
 {
-    let path = path.into();
-    if !path.exists() {
+    let engine_file = engine_file.into();
+    if !engine_file.exists() {
         return None;
     }
 
-    Some(std::fs::read_to_string(path)
+    Some(std::fs::read_to_string(engine_file)
         .expect("Error reading from engine file")
         .parse()
         .expect("The content of engine file is invalid"))
+}
+
+/// Compare chosen engine with engine in engine_file.
+/// Exit with error if they are differ.
+/// Write chosen engine to engine_file if there no engine_file.
+fn process_engine_file<T>(dir_path: T, chosen_engine: Engine)
+    where
+        T: Into<std::path::PathBuf>,
+{
+    let engine_file = dir_path.into().join(ENGINE_PATH);
+    match current_engine(&engine_file) {
+        Some(engine) => {
+            if engine != chosen_engine {
+                error!("Storage directory is already powered by other engine: {}, new one: {}",
+                       engine,
+                       chosen_engine);
+                exit(-1);
+            }
+            debug!("Engine file: {}", engine);
+        },
+        None => {
+            debug!("Set new engine: {}", chosen_engine);
+            std::fs::write(&engine_file,format!("{}", chosen_engine))
+                .expect("Error writing to engine file");
+        }
+    }
 }
 
 fn main() {
@@ -72,33 +99,17 @@ fn main() {
     let current_dir = env::current_dir()
         .expect("Can not get current dir");
 
-    let engine_file = current_dir.join(ENGINE_PATH);
-    match current_engine(&engine_file) {
-        Some(engine) => {
-            if engine != args.engine {
-                error!("Storage directory is already powered by other engine: {}, new one: {}",
-                       engine,
-                       args.engine);
-                exit(-1);
-            }
-            debug!("Engine file: {}", engine);
-        },
-        None => {
-            debug!("Set new engine: {}", args.engine);
-            std::fs::write(&engine_file,
-                           format!("{}", args.engine))
-                .expect("Error writing to engine file");
-        }
-    }
+    process_engine_file(&current_dir, args.engine);
 
     let engine: Result<Box<dyn KvsEngine>> = match args.engine {
-        Engine::Kvs => KvStore::open(current_dir).map(|x| Box::new(x) as _),
-        Engine::Sled => SledEngine::open(current_dir).map(|x| Box::new(x) as _),
+        Engine::Kvs => KvStore::open(&current_dir).map(|x| Box::new(x) as _),
+        Engine::Sled => SledEngine::open(&current_dir).map(|x| Box::new(x) as _),
     };
     let mut engine = engine.expect("Can not open KvsEngine");
 
     let server = Server::new(args.addr);
     if let Err(e) = server.run(engine.as_mut()) {
         error!("{}", e);
+        exit(-1);
     }
 }
