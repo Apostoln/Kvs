@@ -1,8 +1,7 @@
 use std::net::{TcpStream, SocketAddr};
-use std::io::{Write, Read, BufWriter, BufReader};
+use std::io::{Write, BufWriter, BufReader};
 
-use log::{debug, info, warn, error};
-use failure::Fail;
+use log::debug;
 
 use crate::protocol::{Response, Request, ProtocolError};
 
@@ -18,7 +17,7 @@ impl Client {
     pub fn send(&self, req: Request) -> Result<Response, ProtocolError> {
         debug!("Request: {:?}", req);
         debug!("Trying to connect to server at {}", self.server_addr);
-        let mut stream = TcpStream::connect(self.server_addr)?;
+        let stream = TcpStream::connect(self.server_addr)?;
         let reader = BufReader::new(&stream);
         let mut writer = BufWriter::new(&stream);
         debug!("Client started at {}", stream.local_addr()?);

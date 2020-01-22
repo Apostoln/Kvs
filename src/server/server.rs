@@ -1,15 +1,14 @@
 use std::net::{SocketAddr, TcpListener};
 use std::io;
-use std::io::{Read, Write, BufReader, BufWriter};
+use std::io::{Write, BufReader, BufWriter};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde_json;
 use serde::de::Deserialize;
-use log::{debug, info, warn, error};
-use failure::Fail;
+use log::{debug, info, warn};
 
-use crate::{KvStore, KvError};
+use crate::KvError;
 use crate::engine::KvsEngine;
 use crate::protocol::{Request, Response, ProtocolError};
 
@@ -36,7 +35,7 @@ impl Server {
         Server {addr}
     }
 
-    pub fn run(&self, mut storage: &mut dyn KvsEngine) -> Result<(), ProtocolError> {
+    pub fn run(&self, storage: &mut dyn KvsEngine) -> Result<(), ProtocolError> {
         let interrupt = Arc::new(AtomicBool::new(false));
         let interrupt_clone = interrupt.clone();
 
@@ -55,7 +54,7 @@ impl Server {
                 break;
             }
 
-            let mut stream = match stream {
+            let stream = match stream {
                 Ok(s) => s,
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                 Err(_) => stream?,
@@ -65,7 +64,7 @@ impl Server {
             debug!("Accept client {}", remote_addr);
 
             let tcp_reader = BufReader::new(&stream);
-            let mut tcp_writer = BufWriter::new(&stream);
+            let tcp_writer = BufWriter::new(&stream);
             let mut deserializer = serde_json::Deserializer::from_reader(tcp_reader);
             let incoming_request = Request::deserialize(&mut deserializer)?;
 

@@ -3,7 +3,7 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
 
 use serde::Serialize;
-use log::{debug, info, warn, error};
+use log::debug;
 
 use crate::engine::Result;
 

@@ -6,7 +6,7 @@ use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
 use serde_json;
-use log::{debug, info, warn, error};
+use log::debug;
 
 use crate::engine::{
     KvsEngine,

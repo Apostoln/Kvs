@@ -2,7 +2,7 @@ use kvs::{KvError, KvStore};
 use std::env;
 use structopt::StructOpt;
 use simplelog::*;
-use log::{debug, info, warn, error};
+use log::debug;
 
 use kvs::KvsEngine;
 
