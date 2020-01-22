@@ -29,14 +29,14 @@ impl KvsEngine for SledEngine {
 
     fn set(&mut self, key: String, value: String) -> Result<()> {
         let tree: &Tree = &self.db;
-        tree.set(key, value.into_bytes())?; //todo deprecated
+        tree.insert(key, value.into_bytes())?; //todo deprecated
         tree.flush()?;
         Ok(())
     }
 
     fn remove(&mut self, key: String) -> Result<()> {
         let tree: &Tree = &self.db;
-        tree.del(key)?.ok_or(KvError::KeyNotFound)?;
+        tree.remove(key)?.ok_or(KvError::KeyNotFound)?;
         tree.flush()?;
         Ok(())
     }
