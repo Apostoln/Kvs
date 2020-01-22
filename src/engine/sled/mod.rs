@@ -29,7 +29,7 @@ impl KvsEngine for SledEngine {
 
     fn set(&mut self, key: String, value: String) -> Result<()> {
         let tree: &Tree = &self.db;
-        tree.insert(key, value.into_bytes())?; //todo deprecated
+        tree.insert(key, value.into_bytes())?;
         tree.flush()?;
         Ok(())
     }
