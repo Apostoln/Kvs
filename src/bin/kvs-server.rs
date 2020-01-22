@@ -5,7 +5,7 @@ use std::process::exit;
 use structopt::StructOpt;
 use structopt::clap::arg_enum;
 use simplelog::*;
-use log::{debug, error};
+use log::{debug, info, error};
 
 use kvs::{KvStore, SledEngine, KvsEngine, Result};
 use kvs::Server;
@@ -94,10 +94,14 @@ fn main() {
 
     TermLogger::init(args.logging, Config::default(), TerminalMode::Stderr)
         .expect("Error while initializing of TermLogger");
+
     debug!("Conf: {:?}", args);
+    info!("kvs-server {}", env!("CARGO_PKG_VERSION"));
+    info!("Storage engine: {}", args.engine);
+    info!("Listening on {}", args.addr);
 
     let current_dir = env::current_dir()
-        .expect("Can not get current dir");
+        .expect("Can not get current directory");
 
     process_engine_file(&current_dir, args.engine);
 
@@ -105,7 +109,7 @@ fn main() {
         Engine::Kvs => KvStore::open(&current_dir).map(|x| Box::new(x) as _),
         Engine::Sled => SledEngine::open(&current_dir).map(|x| Box::new(x) as _),
     };
-    let mut engine = engine.expect("Can not open KvsEngine");
+    let mut engine = engine.expect("Can not open chosen engine");
 
     let server = Server::new(args.addr);
     if let Err(e) = server.run(engine.as_mut()) {

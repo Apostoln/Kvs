@@ -82,8 +82,9 @@ fn rm(client: Client, key: String) -> Result<(), ProtocolError>{
         Response::Ok(_) => Ok(()),
         Response::Err(what) => {
             if what == format!("{}", KvError::KeyNotFound) {
+                error!("{}", KvError::KeyNotFound);
                 eprintln!("{}", KvError::KeyNotFound); //todo use KvError instead of String
-                Ok(())
+                exit(1);
             }
             else {
                 error!("{}", what);
