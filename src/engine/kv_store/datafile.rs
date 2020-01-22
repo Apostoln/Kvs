@@ -1,9 +1,9 @@
-use std::path::PathBuf;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
+use std::path::PathBuf;
 
-use serde::Serialize;
 use log::debug;
+use serde::Serialize;
 
 use crate::engine::Result;
 
@@ -19,8 +19,8 @@ pub struct PassiveFile {
 
 impl PassiveFile {
     pub fn new<T>(path: T) -> Result<PassiveFile>
-        where
-            T: Into<std::path::PathBuf>,
+    where
+        T: Into<std::path::PathBuf>,
     {
         let mut path = path.into();
         debug!("Open passive file {:?}", path);
@@ -50,7 +50,7 @@ impl PassiveFile {
             serde_json::to_writer(&mut writer, &record?)?;
         }
         writer.flush()?;
-        Ok(PassiveFile{ path, reader })
+        Ok(PassiveFile { path, reader })
     }
 }
 
@@ -69,8 +69,8 @@ pub struct ActiveFile {
 
 impl ActiveFile {
     pub fn new<T>(path: T) -> Result<ActiveFile>
-        where
-            T: Into<std::path::PathBuf>,
+    where
+        T: Into<std::path::PathBuf>,
     {
         let mut path = path.into();
         debug!("Create active file: {:?}", path);

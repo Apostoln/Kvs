@@ -1,8 +1,8 @@
 use kvs::{KvError, KvStore};
+use log::debug;
+use simplelog::*;
 use std::env;
 use structopt::StructOpt;
-use simplelog::*;
-use log::debug;
 
 use kvs::KvsEngine;
 

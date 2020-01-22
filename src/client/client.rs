@@ -1,9 +1,9 @@
-use std::net::{TcpStream, SocketAddr};
-use std::io::{Write, BufWriter, BufReader};
+use std::io::{BufReader, BufWriter, Write};
+use std::net::{SocketAddr, TcpStream};
 
 use log::debug;
 
-use crate::protocol::{Response, Request, ProtocolError};
+use crate::protocol::{ProtocolError, Request, Response};
 
 pub struct Client {
     server_addr: SocketAddr,
@@ -11,7 +11,7 @@ pub struct Client {
 
 impl Client {
     pub fn new(server_addr: SocketAddr) -> Client {
-        Client{server_addr}
+        Client { server_addr }
     }
 
     pub fn send(&self, req: Request) -> Result<Response, ProtocolError> {

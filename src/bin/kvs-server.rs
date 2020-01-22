@@ -1,14 +1,14 @@
-use std::net::SocketAddr;
 use std::env;
+use std::net::SocketAddr;
 use std::process::exit;
 
-use structopt::StructOpt;
-use structopt::clap::arg_enum;
+use log::{debug, error, info};
 use simplelog::*;
-use log::{debug, info, error};
+use structopt::clap::arg_enum;
+use structopt::StructOpt;
 
-use kvs::{KvStore, SledEngine, KvsEngine, Result};
 use kvs::Server;
+use kvs::{KvStore, KvsEngine, Result, SledEngine};
 
 const DEFAULT_ADDRESS: &'static str = "127.0.0.1:4000";
 const ENGINE_PATH: &'static str = "engine";
@@ -49,41 +49,44 @@ arg_enum! {
 
 /// Read current engine from engine_file
 fn current_engine<T>(engine_file: T) -> Option<Engine>
-    where
-        T: Into<std::path::PathBuf>,
+where
+    T: Into<std::path::PathBuf>,
 {
     let engine_file = engine_file.into();
     if !engine_file.exists() {
         return None;
     }
 
-    Some(std::fs::read_to_string(engine_file)
-        .expect("Error reading from engine file")
-        .parse()
-        .expect("The content of engine file is invalid"))
+    Some(
+        std::fs::read_to_string(engine_file)
+            .expect("Error reading from engine file")
+            .parse()
+            .expect("The content of engine file is invalid"),
+    )
 }
 
 /// Compare chosen engine with engine in engine_file.
 /// Exit with error if they are differ.
 /// Write chosen engine to engine_file if there no engine_file.
 fn process_engine_file<T>(dir_path: T, chosen_engine: Engine)
-    where
-        T: Into<std::path::PathBuf>,
+where
+    T: Into<std::path::PathBuf>,
 {
     let engine_file = dir_path.into().join(ENGINE_PATH);
     match current_engine(&engine_file) {
         Some(engine) => {
             if engine != chosen_engine {
-                error!("Storage directory is already powered by other engine: {}, new one: {}",
-                       engine,
-                       chosen_engine);
+                error!(
+                    "Storage directory is already powered by other engine: {}, new one: {}",
+                    engine, chosen_engine
+                );
                 exit(-1);
             }
             debug!("Engine file: {}", engine);
-        },
+        }
         None => {
             debug!("Set new engine: {}", chosen_engine);
-            std::fs::write(&engine_file,format!("{}", chosen_engine))
+            std::fs::write(&engine_file, format!("{}", chosen_engine))
                 .expect("Error writing to engine file");
         }
     }

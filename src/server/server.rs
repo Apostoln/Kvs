@@ -1,16 +1,16 @@
-use std::net::{SocketAddr, TcpListener};
 use std::io;
-use std::io::{Write, BufReader, BufWriter};
-use std::sync::Arc;
+use std::io::{BufReader, BufWriter, Write};
+use std::net::{SocketAddr, TcpListener};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
-use serde_json;
-use serde::de::Deserialize;
 use log::{debug, info, warn};
+use serde::de::Deserialize;
+use serde_json;
 
-use crate::KvError;
 use crate::engine::KvsEngine;
-use crate::protocol::{Request, Response, ProtocolError};
+use crate::protocol::{ProtocolError, Request, Response};
+use crate::KvError;
 
 fn send_error<W: Write>(writer: W, error: KvError) -> Result<(), ProtocolError> {
     let error_msg = format!("{}", error);
@@ -20,7 +20,7 @@ fn send_error<W: Write>(writer: W, error: KvError) -> Result<(), ProtocolError> 
     Ok(serde_json::to_writer(writer, &response)?)
 }
 
-fn send_ok<W: Write>(writer: W, value: Option<String>) -> Result<(), ProtocolError>{
+fn send_ok<W: Write>(writer: W, value: Option<String>) -> Result<(), ProtocolError> {
     let response = Response::Ok(value);
     debug!("Send response: {:?}", response);
     Ok(serde_json::to_writer(writer, &response)?)
@@ -32,7 +32,7 @@ pub struct Server {
 
 impl Server {
     pub fn new(addr: SocketAddr) -> Server {
-        Server {addr}
+        Server { addr }
     }
 
     pub fn run(&self, storage: &mut dyn KvsEngine) -> Result<(), ProtocolError> {
@@ -42,7 +42,8 @@ impl Server {
         ctrlc::set_handler(move || {
             debug!("SIGINT");
             interrupt_clone.store(true, Ordering::SeqCst);
-        }).expect("Error setting SIGINT handler");
+        })
+        .expect("Error setting SIGINT handler");
 
         info!("Server started on {}", self.addr);
         let tcp_listener = TcpListener::bind(self.addr)?;
@@ -70,7 +71,7 @@ impl Server {
 
             debug!("Get request");
             match incoming_request {
-                Request::Get {key} => {
+                Request::Get { key } => {
                     debug!("Get key: {}", key);
                     match storage.get(key) {
                         Ok(value) => {
@@ -81,15 +82,15 @@ impl Server {
                         }
                         Err(e) => send_error(tcp_writer, e)?,
                     }
-                },
-                Request::Set {key, value} => {
+                }
+                Request::Set { key, value } => {
                     debug!("Set key: {}, value: {}", key, value);
                     match storage.set(key, value) {
                         Ok(_) => send_ok(tcp_writer, None)?,
                         Err(e) => send_error(tcp_writer, e)?,
                     }
-                },
-                Request::Rm {key} => {
+                }
+                Request::Rm { key } => {
                     debug!("Remove key: {}", key);
                     match storage.remove(key) {
                         Ok(_) => send_ok(tcp_writer, None)?,

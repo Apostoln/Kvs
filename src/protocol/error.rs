@@ -1,5 +1,5 @@
-use log::error;
 use failure::Fail;
+use log::error;
 
 #[derive(Fail, Debug)]
 pub enum ProtocolError {

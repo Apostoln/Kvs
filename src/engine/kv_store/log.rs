@@ -1,15 +1,15 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
-use std::io::{Seek, SeekFrom};
 use std::fs;
+use std::io::{Seek, SeekFrom};
+use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
 use log::debug;
+use serde::{Deserialize, Serialize};
 
-use crate::engine::Result;
 use super::datafile::*;
-use super::utils::*;
 use super::logpointer::*;
+use super::utils::*;
+use crate::engine::Result;
 
 pub struct Log {
     pub active: ActiveFile,
@@ -19,8 +19,8 @@ pub struct Log {
 
 impl Log {
     pub fn open<T>(dir_path: T) -> Result<Log>
-        where
-            T: Into<std::path::PathBuf>,
+    where
+        T: Into<std::path::PathBuf>,
     {
         let dir_path = dir_path.into();
         debug!("Open Log, path: {:?}", dir_path);
@@ -46,8 +46,8 @@ impl Log {
     }
 
     pub fn get_record<'a, T>(&mut self, log_ptr: &LogPointer) -> Result<T>
-        where
-            T: Deserialize<'a>
+    where
+        T: Deserialize<'a>,
     {
         let offset = log_ptr.offset;
 
@@ -55,7 +55,7 @@ impl Log {
             DataFile::Active => {
                 debug!("Get record of active file, offset: {}", offset);
                 &mut self.active.reader
-            },
+            }
             DataFile::Passive(serial_number) => {
                 debug!("Get record of passive file #{}, offset: {}", serial_number, offset);
                 &mut self
@@ -63,7 +63,7 @@ impl Log {
                     .get_mut(&serial_number)
                     .unwrap()
                     .reader
-            },
+            }
         };
 
         reader.seek(SeekFrom::Start(offset))?;
@@ -82,7 +82,8 @@ impl Log {
         }
 
         // Rename current ACTIVE_FILE_NAME to serial_number.passive
-        let serial_number = self.passive
+        let serial_number = self
+            .passive
             .values_mut()
             .next_back() //option here
             .map_or(Ok(0), |file| get_serial_number(&file.path))?

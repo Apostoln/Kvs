@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use crate::engine::Result;
 use super::utils::*;
+use crate::engine::Result;
 
 pub enum DataFile {
     Active,
@@ -21,8 +21,7 @@ impl LogPointer {
                     offset,
                     file: DataFile::Active,
                 }
-            }
-            else {
+            } else {
                 LogPointer {
                     offset,
                     file: DataFile::Passive(get_serial_number(file_path)?),

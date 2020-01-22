@@ -1,11 +1,11 @@
 use std::net::SocketAddr;
 use std::process::exit;
 
-use simplelog::*;
 use log::{debug, error};
+use simplelog::*;
 use structopt::StructOpt;
 
-use kvs::protocol::{Response, ProtocolError};
+use kvs::protocol::{ProtocolError, Response};
 use kvs::{Client, KvError};
 
 const DEFAULT_SERVER_ADDRESS: &'static str = "127.0.0.1:4000";
@@ -35,27 +35,18 @@ struct ClientArgs {
 
 #[derive(Debug, StructOpt)]
 enum Command {
-    Get {
-        key: String,
-    },
-    Set {
-        key: String,
-        value: String,
-    },
-    Rm {
-        key: String,
-    }
+    Get { key: String },
+    Set { key: String, value: String },
+    Rm { key: String },
 }
 
 fn get(client: Client, key: String) -> Result<(), ProtocolError> {
     let response = client.get(key)?;
     debug!("Response: {:?}", response);
     match response {
-        Response::Ok(option_value) => {
-            match option_value {
-                Some(value) => println!("{}", value),
-                None => println!("{}", KvError::KeyNotFound),
-            }
+        Response::Ok(option_value) => match option_value {
+            Some(value) => println!("{}", value),
+            None => println!("{}", KvError::KeyNotFound),
         },
         Response::Err(e) => {
             error!("{}", e);
@@ -75,7 +66,7 @@ fn set(client: Client, key: String, value: String) -> Result<(), ProtocolError> 
     Ok(())
 }
 
-fn rm(client: Client, key: String) -> Result<(), ProtocolError>{
+fn rm(client: Client, key: String) -> Result<(), ProtocolError> {
     let response = client.rm(key)?;
     debug!("Response: {:?}", response);
     match response {
@@ -85,8 +76,7 @@ fn rm(client: Client, key: String) -> Result<(), ProtocolError>{
                 error!("{}", KvError::KeyNotFound);
                 eprintln!("{}", KvError::KeyNotFound); //todo use KvError instead of String
                 exit(1);
-            }
-            else {
+            } else {
                 error!("{}", what);
                 exit(-3);
             }
@@ -104,9 +94,9 @@ fn main() {
 
     let cmd = ClientArgs::from_args().cmd;
     let res = match cmd {
-        Command::Get{key} => get(client, key),
-        Command::Set{key, value} => set(client, key, value),
-        Command::Rm{key} => rm(client, key),
+        Command::Get { key } => get(client, key),
+        Command::Set { key, value } => set(client, key, value),
+        Command::Rm { key } => rm(client, key),
     };
 
     if let Err(e) = res {

@@ -2,11 +2,9 @@ use std::result;
 use std::string::FromUtf8Error;
 
 use failure::Fail;
-use serde_json;
 use log::error;
+use serde_json;
 use sled;
-
-
 
 #[derive(Fail, Debug)]
 pub enum KvError {

@@ -1,7 +1,7 @@
-use crate::{KvsEngine, Result, KvError};
+use crate::{KvError, KvsEngine, Result};
 
 use sled;
-use sled::{Tree, Db};
+use sled::{Db, Tree};
 
 pub struct SledEngine {
     db: Db,

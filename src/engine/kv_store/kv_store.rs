@@ -4,19 +4,19 @@ use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::time::UNIX_EPOCH;
 
+use log::debug;
 use serde::{Deserialize, Serialize};
 use serde_json;
-use log::debug;
 
-use crate::engine::{
-    KvsEngine,
-    KvError::KeyNotFound,
-    KvError::UnexpectedCommand,
-    Result,
-};
+use super::datafile::*;
 use super::log::Log;
 use super::logpointer::*;
-use super::datafile::*;
+use crate::engine::{
+    KvError::KeyNotFound,
+    KvError::UnexpectedCommand,
+    KvsEngine,
+    Result
+};
 
 const RECORDS_LIMIT: u64 = 100;
 
@@ -55,8 +55,8 @@ impl KvStore {
     }
 
     pub fn set_backups_dir<T>(&mut self, path: T)
-        where
-            T: Into<std::path::PathBuf>,
+    where
+        T: Into<std::path::PathBuf>,
     {
         let path = path.into();
         debug!("Set new backup directory: {:?}", path);
@@ -123,8 +123,7 @@ impl KvStore {
             .collect()
     }
 
-    fn index_datafile(index: &mut Index, datafile: &mut impl DataFileGetter) -> Result<()>
-    {
+    fn index_datafile(index: &mut Index, datafile: &mut impl DataFileGetter) -> Result<()> {
         let (path, reader) = datafile.get_inner();
         debug!("Index datafile: {:?}", path);
         let mut pos = reader.seek(SeekFrom::Start(0))?;
