@@ -57,10 +57,8 @@ fn main() {
     let addr = args.addr;
 
     let engine: Result<Box<dyn KvsEngine>> = match args.engine {
-        Engine::Kvs => KvStore::open(current_dir)
-            .map(|x| -> Box<dyn KvsEngine> {Box::new(x)}),
-        Engine::Sled => SledEngine::open(current_dir)
-            .map(|x| -> Box<dyn KvsEngine> {Box::new(x)}),
+        Engine::Kvs => KvStore::open(current_dir).map(|x| Box::new(x) as _),
+        Engine::Sled => SledEngine::open(current_dir).map(|x| Box::new(x) as _),
     };
 
     let mut engine = engine.expect("Can not open KvsEngine");
