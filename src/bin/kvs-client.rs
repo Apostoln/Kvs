@@ -16,19 +16,21 @@ struct ClientArgs {
     #[structopt(
         short,
         long,
+        global = true,
         default_value = DEFAULT_SERVER_ADDRESS,
         parse(try_from_str))]
     addr: SocketAddr,
 
-    #[structopt(subcommand)]
-    cmd: Command,
-
     #[structopt(
         short,
         long,
+        global = true,
         default_value = "DEBUG",
         parse(try_from_str))]
     logging: LevelFilter,
+
+    #[structopt(subcommand)]
+    cmd: Command,
 }
 
 #[derive(Debug, StructOpt)]
