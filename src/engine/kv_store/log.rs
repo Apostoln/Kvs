@@ -34,9 +34,7 @@ impl Log {
             })
             .collect::<Result<_>>()?;
 
-        let mut active_file_path = dir_path.clone();
-        active_file_path.push(ACTIVE_FILE_NAME);
-        let active_file = ActiveFile::new(active_file_path)?;
+        let active_file = ActiveFile::new(dir_path.join(ACTIVE_FILE_NAME))?;
 
         Ok(Log {
             active: active_file,
@@ -85,19 +83,18 @@ impl Log {
         let serial_number = self
             .passive
             .values_mut()
-            .next_back() //option here
+            .next_back() // Last PassiveFile
             .map_or(Ok(0), |file| get_serial_number(&file.path))?
             + 1;
-        let mut new_path = self.dir_path.clone();
-        new_path.push(format!("{}.{}", serial_number, PASSIVE_EXT));
+        let mut new_path = self.dir_path.join(format!("{}.{}",
+                                                      serial_number,
+                                                      PASSIVE_EXT));
         fs::rename(&self.active.path, &mut new_path)?;
         debug!("Move active file to {:?}", new_path);
 
         // Move old active file to passives and create new active
         self.passive.insert(serial_number, PassiveFile::new(new_path)?);
-        let mut active_path = self.dir_path.clone();
-        active_path.push(ACTIVE_FILE_NAME);
-        self.active = ActiveFile::new(active_path)?;
+        self.active = ActiveFile::new(self.dir_path.join(ACTIVE_FILE_NAME))?;
         Ok(())
     }
 
@@ -118,11 +115,9 @@ impl Log {
                 .take(RECORDS_IN_COMPACTED)
                 .collect::<Vec<_>>();
 
-            let mut path = self.dir_path.clone();
-            path.push(format!("{}.{}", counter, PASSIVE_EXT));
-
             // New file on the fs will be created here with appropriated records
-            let passive_file = PassiveFile::from_records(chunk, path)?;
+            let passive_file_path = self.dir_path.join(format!("{}.{}", counter, PASSIVE_EXT));
+            let passive_file = PassiveFile::from_records(chunk, passive_file_path)?;
             passive_files.insert(counter, passive_file);
 
             counter += 1;

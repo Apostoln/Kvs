@@ -18,7 +18,7 @@ use crate::engine::{
     Result
 };
 
-const RECORDS_LIMIT: u64 = 100;
+const RECORDS_LIMIT: u64 = 1024;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 enum Command {
@@ -77,12 +77,11 @@ impl KvStore {
         // Create backup if specified
         if let Some(backups_dir) = &self.backups_dir {
             debug!("Backup triggered, backups directory: {:?}", backups_dir);
-            let mut backup_dir = backups_dir.clone();
             let time = std::time::SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_micros(); // Note: Error while creating directory due to equal names if time duration is too big.
-            backup_dir.push(format!("precompact_backup_{0}", time));
+            let backup_dir = backups_dir.join(format!("pre_compact_backup_{0}", time));
             self.backup(&backup_dir)?;
         }
 
@@ -102,8 +101,7 @@ impl KvStore {
         fs::create_dir(&mut backup_dir)?;
 
         for passive in self.log.passive.values_mut() {
-            let mut new_file = backup_dir.clone();
-            new_file.push(passive.path.file_name().unwrap());
+            let new_file = backup_dir.join(passive.path.file_name().unwrap());
             fs::copy(&passive.path, new_file)?;
         }
         Ok(())

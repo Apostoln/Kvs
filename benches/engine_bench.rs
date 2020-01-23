@@ -19,8 +19,8 @@ fn set_bench(c: &mut Criterion) {
                     (temp_dir, KvStore::open(path).unwrap())
                 },
                 |tmp_and_store| {
-                    let (tmp_dir, mut store) = tmp_and_store;
-                    for i in 1..120 {
+                    let (_tmp_dir, mut store) = tmp_and_store;
+                    for i in 1..100000 {
                         store.set(format!("key{}", i), "value".to_string()).unwrap();
                     }
                 },
@@ -38,8 +38,8 @@ fn set_bench(c: &mut Criterion) {
                     (temp_dir, SledEngine::open(path).unwrap())
                 },
                 |tmp_db| {
-                    let (tmp_dr, mut db) = tmp_db;
-                    for i in 1..120 {
+                    let (_tmp_dir, mut db) = tmp_db;
+                    for i in 1..5000 {
                         db.set(format!("key{}", i), "value".to_string()).unwrap();
                     }
                 },
