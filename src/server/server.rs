@@ -36,9 +36,9 @@ impl Server {
     }
 
     pub fn run(&self, storage: &mut dyn KvsEngine) -> Result<(), ProtocolError> {
+        //flag for the interruption by SIGINT
         let interrupt = Arc::new(AtomicBool::new(false));
         let interrupt_clone = interrupt.clone();
-
         ctrlc::set_handler(move || {
             debug!("SIGINT");
             interrupt_clone.store(true, Ordering::SeqCst);

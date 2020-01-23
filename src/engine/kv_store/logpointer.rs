@@ -8,6 +8,9 @@ pub enum DataFile {
     Passive(u64), //serial number
 }
 
+/// Represents the position of the Value on the disk.
+/// Describes the type of DataFile: Passive or Active,
+/// and offset in bytes from the begin of the file.
 pub struct LogPointer {
     pub offset: u64,
     pub file: DataFile,

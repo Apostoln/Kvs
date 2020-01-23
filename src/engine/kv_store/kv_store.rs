@@ -18,16 +18,33 @@ use crate::engine::{
     Result
 };
 
-const RECORDS_LIMIT: u64 = 1024;
+/// Max number of records in one data file.
+/// Compaction will be triggered after exceeding.
+const RECORDS_LIMIT: u64 = 1024; //todo make configurable
 
+/// Record in storage
 #[derive(Serialize, Deserialize, Debug, Clone)]
-enum Command {
+enum Command { //todo rename to Record?
     Set { key: String, value: String },
     Remove { key: String },
 }
 
+/// A map that associates a Key with position of its Value on the disk.
+/// Index is used to get values faster.
 type Index = HashMap<String, LogPointer>;
 
+/// `KvStore` is a log-based storage engine that stores a pairs Key/Value.
+/// The `Log` is a persistent sequence of records on disk, that represents commands to storage like `Set` or `Remove`.
+/// All records are written to the end of the log. After updating or removing value from storage,
+/// related to this value records are not removed from log. Instead, new records are written to the end of the log.
+///
+/// # Example:
+/// ```rust
+/// use kvs::KvStore;
+/// let mut storage = KvStore::open(std::env::current_dir().unwrap()).unwrap();
+/// storage.set("Key".to_string(), "Value".to_string());
+/// assert_eq!(storage.get("Key".to_string()).unwrap(), Some("Value".to_string()));
+/// ```
 pub struct KvStore {
     index: Index,
     log: Log,
@@ -36,6 +53,7 @@ pub struct KvStore {
 }
 
 impl KvStore {
+    /// Open a `KvStore` with the given path.
     pub fn open<T>(path: T) -> Result<KvStore>
     where
         T: Into<std::path::PathBuf>,
@@ -54,6 +72,7 @@ impl KvStore {
         })
     }
 
+    /// Set path for saving backups.
     pub fn set_backups_dir<T>(&mut self, path: T)
     where
         T: Into<std::path::PathBuf>,
@@ -63,15 +82,20 @@ impl KvStore {
         self.backups_dir = Some(path);
     }
 
+    /// Reindex datafiles.
     fn reindex(&mut self) -> Result<()> {
         debug!("Reindex");
         self.index = KvStore::index(&mut self.log)?;
         Ok(())
     }
 
+    /// Compact the `Log`.
+    /// Compaction is the process of removing deprecated records from passive datafiles of `Log`.
+    /// Old passive datafiles will be replaced by new ones with only actual records.
+    /// Backup will be created if specified.
     fn compact_log(&mut self) -> Result<()> {
         debug!("Compact log");
-        self.log.dump()?;
+        self.log.dump()?; //todo dumping is unnecessary here?
         self.reindex()?;
 
         // Create backup if specified
@@ -96,6 +120,7 @@ impl KvStore {
         Ok(())
     }
 
+    /// Copy passive datafiles of `Log` to specified directory.
     fn backup(&mut self, mut backup_dir: &PathBuf) -> Result<()> {
         debug!("Backup, path: {:?}", backup_dir);
         fs::create_dir(&mut backup_dir)?;
@@ -107,9 +132,11 @@ impl KvStore {
         Ok(())
     }
 
+    /// Return actual commands from `Log`.
     fn actual_commands(&mut self) -> Vec<Result<Command>> {
+        //todo move to Log module?
         debug!("Get actual commands");
-        let log = &mut self.log;
+        let log = &mut self.log; //Seems moving this method to Log is impossible due to borrow-checkers error here
         self.index
             .values()
             .map(|log_ptr| -> Result<Command> {
@@ -121,6 +148,7 @@ impl KvStore {
             .collect()
     }
 
+    /// Index actual records from specified datafile.
     fn index_datafile(index: &mut Index, datafile: &mut impl DataFileGetter) -> Result<()> {
         let (path, reader) = datafile.get_inner();
         debug!("Index datafile: {:?}", path);
@@ -140,6 +168,7 @@ impl KvStore {
         Ok(())
     }
 
+    /// Index active and passive datafiles from `Log`.
     fn index(log: &mut Log) -> Result<Index> {
         debug!("Index log");
         let mut index = Index::new();
@@ -156,6 +185,8 @@ impl KvStore {
 }
 
 impl KvsEngine for KvStore {
+    /// Get the value of a given key.
+    /// Returns `None` if the given key does not exist.
     fn get(&mut self, key: String) -> Result<Option<String>> {
         debug!("Get key: {}", key);
         let log = &mut self.log;
@@ -171,6 +202,7 @@ impl KvsEngine for KvStore {
                 })
     }
 
+    /// Set the key and value
     fn set(&mut self, key: String, value: String) -> Result<()> {
         debug!("Set key: {}, value: {}", key, value);
         let mut writer = &mut self.log.active.writer;
@@ -198,6 +230,9 @@ impl KvsEngine for KvStore {
         Ok(())
     }
 
+    /// Remove a given key.
+    /// # Error
+    /// It returns `KvError::KeyNotFound` if the given key is not found.
     fn remove(&mut self, key: String) -> Result<()> {
         debug!("Remove key: {}", key);
 
@@ -216,6 +251,7 @@ impl KvsEngine for KvStore {
 }
 
 impl Drop for KvStore {
+    /// Compact the log.
     fn drop(&mut self) {
         debug!("Drop KvStore");
         if let Err(e) = self.compact_log() {

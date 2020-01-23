@@ -11,13 +11,21 @@ use super::logpointer::*;
 use super::utils::*;
 use crate::engine::Result;
 
+/// The `Log` is an abstraction over the persistent sequence of records on disk.
+/// It consists of datafiles with records. There are two types of datafiles: active and passive.
+/// There is only one active datafile and some passives datafiles in the `Log`
+/// Active datafile is opened for reading and writing while passive files only for reading.
+/// New records are added in the end of active datafile.
+/// Passive datafiles contain immutable sequence of records.
+/// Passive datafiles are enumerated monotonically starting from 1.
 pub struct Log {
     pub active: ActiveFile,
-    pub passive: BTreeMap<u64, PassiveFile>,
+    pub passive: BTreeMap<u64 /*serial number*/, PassiveFile>,
     pub dir_path: PathBuf,
 }
 
 impl Log {
+    /// Open a `Log` with the given path.
     pub fn open<T>(dir_path: T) -> Result<Log>
     where
         T: Into<std::path::PathBuf>,
@@ -43,6 +51,7 @@ impl Log {
         })
     }
 
+    /// Get record from `Log` by `LogPointer`.
     pub fn get_record<'a, T>(&mut self, log_ptr: &LogPointer) -> Result<T>
     where
         T: Deserialize<'a>,
@@ -72,6 +81,9 @@ impl Log {
             .unwrap()?)
     }
 
+    /// Dump the active datafile.
+    /// Dumping is the process of moving the content of active datafile to the new passive one
+    /// and creating new empty active datafile.
     pub fn dump(&mut self) -> Result<()> {
         debug!("Dump Log");
         if self.active.reader.get_mut().metadata()?.len() == 0 {
@@ -98,8 +110,10 @@ impl Log {
         Ok(())
     }
 
-    /// Replace old passive files by new ones. Old files will be deleted.
-    /// New files are compacted and created from unique records in the next way
+    /// Compact the log.
+    /// Compaction is the process of removing deprecated records from passive datafiles of Log.
+    /// Old passive datafiles will be replaced by new ones with only actual(unique) records.
+    /// New files are compacted and created from unique records in the next way:
     /// 1. Split commands to chunks of `RECORDS_IN_COMPACTED` elements
     /// 2. Write each chunk to new passive file in log directory.
     /// 3. Collect passive files to BTreeMap and set it to `self.passive`.
@@ -128,6 +142,7 @@ impl Log {
         Ok(())
     }
 
+    /// Remove all passive datafiles.
     fn clear_passives(&mut self) -> Result<()> {
         debug!("Clear passive files");
         for passive in &mut self.passive.values_mut() {

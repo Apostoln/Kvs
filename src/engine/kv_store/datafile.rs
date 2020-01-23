@@ -7,10 +7,12 @@ use serde::Serialize;
 
 use crate::engine::Result;
 
+/// Crutch for getting fields of DataFile and satisfying borrow-checker
 pub trait DataFileGetter {
     fn get_inner(&mut self) -> (&PathBuf, &mut BufReader<File>);
 }
 
+/// Passive datafile is read-only.
 #[derive(Debug)]
 pub struct PassiveFile {
     pub path: PathBuf,
@@ -18,6 +20,7 @@ pub struct PassiveFile {
 }
 
 impl PassiveFile {
+    /// Open passive datafile.
     pub fn new<T>(path: T) -> Result<PassiveFile>
     where
         T: Into<std::path::PathBuf>,
@@ -60,6 +63,7 @@ impl DataFileGetter for PassiveFile {
     }
 }
 
+/// Active datafile is read-write.
 #[derive(Debug)]
 pub struct ActiveFile {
     pub path: PathBuf,
@@ -68,6 +72,7 @@ pub struct ActiveFile {
 }
 
 impl ActiveFile {
+    /// Open active datafile by path or create new one if not exists.
     pub fn new<T>(path: T) -> Result<ActiveFile>
     where
         T: Into<std::path::PathBuf>,
