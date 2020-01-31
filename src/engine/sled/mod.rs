@@ -18,7 +18,7 @@ impl SledEngine {
 }
 
 impl KvsEngine for SledEngine {
-    fn get(&mut self, key: String) -> Result<Option<String>> {
+    fn get(&self, key: String) -> Result<Option<String>> {
         let tree: &Tree = &self.db;
         Ok(tree
             .get(key)?
@@ -27,14 +27,14 @@ impl KvsEngine for SledEngine {
             .transpose()?)
     }
 
-    fn set(&mut self, key: String, value: String) -> Result<()> {
+    fn set(&self, key: String, value: String) -> Result<()> {
         let tree: &Tree = &self.db;
         tree.insert(key, value.into_bytes())?;
         tree.flush()?;
         Ok(())
     }
 
-    fn remove(&mut self, key: String) -> Result<()> {
+    fn remove(&self, key: String) -> Result<()> {
         let tree: &Tree = &self.db;
         tree.remove(key)?.ok_or(KvError::KeyNotFound)?;
         tree.flush()?;

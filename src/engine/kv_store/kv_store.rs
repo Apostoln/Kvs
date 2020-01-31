@@ -187,7 +187,7 @@ impl KvStore {
 impl KvsEngine for KvStore {
     /// Get the value of a given key.
     /// Returns `None` if the given key does not exist.
-    fn get(&mut self, key: String) -> Result<Option<String>> {
+    fn get(&self, key: String) -> Result<Option<String>> {
         debug!("Get key: {}", key);
         let log = &mut self.log;
         self.index
@@ -203,7 +203,7 @@ impl KvsEngine for KvStore {
     }
 
     /// Set the key and value
-    fn set(&mut self, key: String, value: String) -> Result<()> {
+    fn set(&self, key: String, value: String) -> Result<()> {
         debug!("Set key: {}, value: {}", key, value);
         let mut writer = &mut self.log.active.writer;
         let pos = writer.seek(SeekFrom::Current(0))?;
@@ -233,7 +233,7 @@ impl KvsEngine for KvStore {
     /// Remove a given key.
     /// # Error
     /// It returns `KvError::KeyNotFound` if the given key is not found.
-    fn remove(&mut self, key: String) -> Result<()> {
+    fn remove(&self, key: String) -> Result<()> {
         debug!("Remove key: {}", key);
 
         let mut writer = &mut self.log.active.writer;
