@@ -35,7 +35,7 @@ impl Server {
         Server { addr }
     }
 
-    pub fn run(&self, storage: &mut dyn KvsEngine) -> Result<(), ProtocolError> {
+    pub fn run(&self, storage: impl KvsEngine) -> Result<(), ProtocolError> {
         //flag for the interruption by SIGINT
         let interrupt = Arc::new(AtomicBool::new(false));
         let interrupt_clone = interrupt.clone();

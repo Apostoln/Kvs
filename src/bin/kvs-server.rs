@@ -9,6 +9,7 @@ use structopt::StructOpt;
 
 use kvs::Server;
 use kvs::{KvStore, KvsEngine, Result, SledEngine};
+use std::path::PathBuf;
 
 const DEFAULT_ADDRESS: &'static str = "127.0.0.1:4000";
 const ENGINE_PATH: &'static str = "engine";
@@ -108,14 +109,17 @@ fn main() {
 
     process_engine_file(&current_dir, args.engine);
 
-    let engine: Result<Box<dyn KvsEngine>> = match args.engine {
-        Engine::Kvs => KvStore::open(&current_dir).map(|x| Box::new(x) as _),
-        Engine::Sled => SledEngine::open(&current_dir).map(|x| Box::new(x) as _),
-    };
-    let mut engine = engine.expect("Can not open chosen engine");
-
     let server = Server::new(args.addr);
-    if let Err(e) = server.run(engine.as_mut()) {
+    match args.engine {
+        Engine::Kvs => run::<KvStore>(server, current_dir),
+        Engine::Sled => run::<SledEngine>(server, current_dir),
+    }
+}
+
+fn run<T: KvsEngine>(server: Server, dir_path: PathBuf) {
+    let engine = T::open(dir_path)
+        .expect("Can not open chosen engine");
+    if let Err(e) = server.run(engine) {
         error!("{}", e);
         exit(-1);
     }

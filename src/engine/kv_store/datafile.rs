@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use log::debug;
 use serde::Serialize;
@@ -16,7 +17,7 @@ pub trait DataFileGetter {
 #[derive(Debug)]
 pub struct PassiveFile {
     pub path: PathBuf,
-    pub reader: BufReader<File>,
+    pub reader: Mutex<BufReader<File>>,
 }
 
 impl PassiveFile {
@@ -30,7 +31,7 @@ impl PassiveFile {
         let file = std::fs::OpenOptions::new()
             .read(true)
             .open(&mut path)?;
-        let reader = BufReader::new(file);
+        let reader = Mutex::new(BufReader::new(file));
         Ok(PassiveFile { path, reader })
     }
 
@@ -47,7 +48,7 @@ impl PassiveFile {
             .append(true)
             .open(&mut path)?;
         let mut writer = BufWriter::new(file.try_clone()?);
-        let reader = BufReader::new(file.try_clone()?);
+        let reader = Mutex::new(BufReader::new(file.try_clone()?));
 
         for record in records {
             serde_json::to_writer(&mut writer, &record?)?;
@@ -59,7 +60,7 @@ impl PassiveFile {
 
 impl DataFileGetter for PassiveFile {
     fn get_inner(&mut self) -> (&PathBuf, &mut BufReader<File>) {
-        (&self.path, &mut self.reader)
+        (&self.path, self.reader.get_mut().unwrap())
     }
 }
 
@@ -67,7 +68,7 @@ impl DataFileGetter for PassiveFile {
 #[derive(Debug)]
 pub struct ActiveFile {
     pub path: PathBuf,
-    pub reader: BufReader<File>,
+    pub reader: Mutex<BufReader<File>>,
     pub writer: BufWriter<File>,
 }
 
@@ -85,7 +86,7 @@ impl ActiveFile {
             .create(true)
             .append(true)
             .open(&mut path)?;
-        let reader = BufReader::new(file.try_clone()?);
+        let reader = Mutex::new(BufReader::new(file.try_clone()?));
         let writer = BufWriter::new(file.try_clone()?);
 
         Ok(ActiveFile {
@@ -98,6 +99,6 @@ impl ActiveFile {
 
 impl DataFileGetter for ActiveFile {
     fn get_inner(&mut self) -> (&PathBuf, &mut BufReader<File>) {
-        (&self.path, &mut self.reader)
+        (&self.path, self.reader.get_mut().unwrap())
     }
 }

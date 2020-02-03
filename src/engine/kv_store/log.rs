@@ -20,7 +20,7 @@ use crate::engine::Result;
 /// Passive datafiles are enumerated monotonically starting from 1.
 pub struct Log {
     pub active: ActiveFile,
-    pub passive: BTreeMap<u64 /*serial number*/, PassiveFile>,
+    pub passive: BTreeMap<u64 /*serial number*/, PassiveFile>, //<u64, Mutex<PassiveFile>
     pub dir_path: PathBuf,
 }
 
@@ -52,30 +52,32 @@ impl Log {
     }
 
     /// Get record from `Log` by `LogPointer`.
-    pub fn get_record<'a, T>(&mut self, log_ptr: &LogPointer) -> Result<T>
+    pub fn get_record<'a, T>(&self, log_ptr: &LogPointer) -> Result<T>
     where
         T: Deserialize<'a>,
     {
         let offset = log_ptr.offset;
 
-        let reader = match log_ptr.file {
+        //todo create new reader for appropriated path instead of getting existed
+        let mut reader = match log_ptr.file {
             DataFile::Active => {
                 debug!("Get record of active file, offset: {}", offset);
-                &mut self.active.reader
+                (&self.active.reader).lock().unwrap()
             }
             DataFile::Passive(serial_number) => {
                 debug!("Get record of passive file #{}, offset: {}", serial_number, offset);
-                &mut self
-                    .passive
-                    .get_mut(&serial_number)
+                (&self.passive)
+                    .get(&serial_number)
                     .unwrap()
                     .reader
+                    .lock()
+                    .unwrap()
             }
         };
 
         reader.seek(SeekFrom::Start(offset))?;
 
-        Ok(serde_json::Deserializer::from_reader(reader)
+        Ok(serde_json::Deserializer::from_reader(reader.get_mut())
             .into_iter()
             .next()
             .unwrap()?)
@@ -86,7 +88,7 @@ impl Log {
     /// and creating new empty active datafile.
     pub fn dump(&mut self) -> Result<()> {
         debug!("Dump Log");
-        if self.active.reader.get_mut().metadata()?.len() == 0 {
+        if self.active.reader.lock().unwrap().get_mut().metadata()?.len() == 0 {
             debug!("File is already empty"); //Nothing to do here
             return Ok(());
         }
@@ -104,8 +106,13 @@ impl Log {
         fs::rename(&self.active.path, &mut new_path)?;
         debug!("Move active file to {:?}", new_path);
 
+
+        //todo DO NOT CREATE NEW Passive FROM PATH, CREATE NEW FROM READER OF ACTIVE,
+        // i.e. save the old FD for index correctness
+
         // Move old active file to passives and create new active
         self.passive.insert(serial_number, PassiveFile::new(new_path)?);
+
         self.active = ActiveFile::new(self.dir_path.join(ACTIVE_FILE_NAME))?;
         Ok(())
     }
