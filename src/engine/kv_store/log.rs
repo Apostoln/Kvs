@@ -7,7 +7,7 @@ use log::debug;
 use serde::{Deserialize, Serialize};
 
 use super::datafile::*;
-use super::logpointer::*;
+use super::location::*;
 use super::utils::*;
 use crate::engine::Result;
 
@@ -52,14 +52,14 @@ impl Log {
     }
 
     /// Get record from `Log` by `LogPointer`.
-    pub fn get_record<'a, T>(&self, log_ptr: &LogPointer) -> Result<T>
+    pub fn get_record<'a, T>(&self, location: &Location) -> Result<T>
     where
         T: Deserialize<'a>,
     {
-        let offset = log_ptr.offset;
+        let offset = location.offset;
 
         //todo create new reader for appropriated path instead of getting existed
-        let mut reader = match log_ptr.file {
+        let mut reader = match location.file {
             DataFile::Active => {
                 debug!("Get record of active file, offset: {}", offset);
                 (&self.active.reader).lock().unwrap()

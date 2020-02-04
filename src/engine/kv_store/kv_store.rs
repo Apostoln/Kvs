@@ -11,7 +11,7 @@ use serde_json;
 
 use super::datafile::*;
 use super::log::Log;
-use super::logpointer::*;
+use super::location::*;
 use crate::engine::{
     KvError::KeyNotFound,
     KvError::UnexpectedCommand,
@@ -32,7 +32,7 @@ enum Command { //todo rename to Record?
 
 /// A map that associates a Key with position of its Value on the disk.
 /// Index is used to get values faster.
-type Index = HashMap<String, LogPointer>;
+type Index = HashMap<String, Location>;
 
 /// `KvStore` is a log-based storage engine that stores a pairs Key/Value.
 /// The `Log` is a persistent sequence of records on disk, that represents commands to storage like `Set` or `Remove`.
@@ -83,8 +83,8 @@ impl KvsEngine for KvStore {
             .get(&key)
             .map_or(
                 Ok(None),
-                |log_ptr| {
-                    match log.lock().unwrap().get_record(log_ptr)? {
+                |location| {
+                    match log.lock().unwrap().get_record(location)? {
                         Command::Set { value, .. } => Ok(Some(value)),
                         Command::Remove { .. } => Err(UnexpectedCommand),
                     }
@@ -107,7 +107,7 @@ impl KvsEngine for KvStore {
         serde_json::to_writer(writer.get_mut(), &cmd)?;
         writer.flush()?;
 
-        if let Some(_) = self.index.lock().unwrap().insert(key, LogPointer { file: DataFile::Active, offset: pos }) {
+        if let Some(_) = self.index.lock().unwrap().insert(key, Location { file: DataFile::Active, offset: pos }) {
             self.unused_records.fetch_add(1, Ordering::SeqCst);
             debug!("Increased unused records: {}", self.unused_records.load(Ordering::SeqCst));
 
@@ -217,8 +217,8 @@ impl KvStore {
             .lock() //todo need here? Is mutex needed?
             .unwrap()
             .values()
-            .map(|log_ptr| -> Result<Command> {
-                match log.lock().unwrap().get_record(log_ptr)? {
+            .map(|location| -> Result<Command> {
+                match log.lock().unwrap().get_record(location)? {
                     Command::Set { key, value } => Ok(Command::Set { key, value }),
                     _ => Err(UnexpectedCommand),
                 }
@@ -235,7 +235,7 @@ impl KvStore {
         while let Some(item) = stream.next() {
             match item? {
                 Command::Set { key, .. } => {
-                    index.insert(key, LogPointer::new(pos, path)?);
+                    index.insert(key, Location::new(pos, path)?);
                 }
                 Command::Remove { key } => {
                     index.remove(&key).unwrap();
