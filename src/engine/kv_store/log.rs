@@ -181,6 +181,12 @@ impl Log {
         Ok(())
     }
 
+    /// Get path of passive datafile with specified `serial_number`
+    /// Note: `serial_number` must refer to an existing file
+    pub fn passive_path(&self, serial_number: u64) -> PathBuf {
+        self.dir_path.join(format!("{}.{}",serial_number, PASSIVE_EXT))
+    }
+
     fn create_active(&self) -> Result<()> {
         let active_file_path = &self.active_file_path;
         debug!("Create new active file {:?}", active_file_path);
@@ -219,11 +225,5 @@ impl Log {
             .filter(|entry| entry.path().extension() == Some(OsStr::new(PASSIVE_EXT)))
             .try_for_each(|entry| fs::remove_file(entry.path()))?;
         Ok(())
-    }
-
-    /// Get path of passive datafile with specified `serial_number`
-    /// Note: `serial_number` must refer to an existing file
-    fn passive_path(&self, serial_number: u64) -> PathBuf {
-        self.dir_path.join(format!("{}.{}",serial_number, PASSIVE_EXT))
     }
 }

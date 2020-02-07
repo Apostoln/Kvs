@@ -182,7 +182,7 @@ impl KvStore {
         fs::create_dir(&backup_dir)?;
 
         for serial_number in 1..self.log.last_serial_number.load(Ordering::SeqCst) {
-            let file_name = format!("{}.{}", serial_number, PASSIVE_EXT); //todo? .passive_path()
+            let file_name = format!("{}.{}", serial_number, PASSIVE_EXT);
             let old_path = self.log.dir_path.join(&file_name);
             let new_path = backup_dir.join(&file_name);
             fs::copy(&old_path, &new_path)?;
@@ -213,9 +213,7 @@ impl KvStore {
         debug!("Index log {:?}", log);
         let mut index = Index::new();
         for serial_number in 1..=log.last_serial_number.load(Ordering::SeqCst) {
-            let file_name = format!("{}.{}", serial_number, PASSIVE_EXT);
-            let passive_datafile_path = log.dir_path.join(&file_name); //todo duplicate with  backup
-            log.index_datafile(&mut index, &passive_datafile_path)?
+            log.index_datafile(&mut index, &log.passive_path(serial_number))?
         }
 
         let active_datafile_path = &log.active_file_path;
