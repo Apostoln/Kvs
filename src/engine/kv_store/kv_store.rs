@@ -102,7 +102,6 @@ impl KvsEngine for KvStore {
             if self.unused_records.load(Ordering::SeqCst) > RECORDS_LIMIT {
                 debug!("Unused records exceeds records limit({}). Compaction triggered", RECORDS_LIMIT);
                 self.compact_log()?;
-                self.reindex()?;
                 self.unused_records.store(0, Ordering::SeqCst);
             }
         }
@@ -171,7 +170,7 @@ impl KvStore {
         // Create new passive files and write actual commands to them,
         // then replace old passive files to new in self.log
         self.log.compact(commands)?;
-        self.reindex()?; //todo too much reindex?
+        self.reindex()?;
 
         Ok(())
     }
