@@ -183,7 +183,7 @@ impl Log {
 
     fn create_active(&self) -> Result<()> {
         let active_file_path = &self.active_file_path;
-        debug!("Create new active file {}", active_file_path.to_str().unwrap()); //todo wtf how to display Path
+        debug!("Create new active file {:?}", active_file_path);
 
         fs::OpenOptions::new()
             .create(true)
