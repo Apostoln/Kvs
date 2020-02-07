@@ -212,7 +212,7 @@ impl Log {
         Ok(())
     }
 
-    fn create_passive(&self, records: Vec<Result<Record>>, serial_number: u64) -> Result<()> { //todo iter instead of vec?
+    fn create_passive(&self, records: Vec<Result<Record>>, serial_number: u64) -> Result<()> {
         let passive_file_path = self.passive_path(serial_number);
         debug!("Create new passive file {:?} from {} records", passive_file_path, records.len());
         let file = fs::OpenOptions::new()

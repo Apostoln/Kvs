@@ -45,9 +45,9 @@ pub type Index = HashMap<String, Location>;
 /// assert_eq!(storage.get("Key".to_string()).unwrap(), Some("Value".to_string()));
 /// ```
 pub struct KvStore {
-    index: Arc<Mutex<Index>>, //Arc<RwLock>
+    index: Arc<Mutex<Index>>,
     log: Arc<Log>,
-    unused_records: Arc<AtomicU64>, //Arc<AtomicU64>
+    unused_records: Arc<Mutex<u64>>,
     backups_dir: Option<PathBuf>,
 }
 
@@ -66,7 +66,7 @@ impl KvsEngine for KvStore {
         Ok(KvStore {
             index,
             log,
-            unused_records: Arc::new(AtomicU64::new(0)),
+            unused_records: Arc::new(Mutex::new(0)),
             backups_dir: None,
         })
     }
@@ -96,13 +96,13 @@ impl KvsEngine for KvStore {
 
         let prev_location = self.index.lock().unwrap().insert(key, location);
         if let Some(_) = prev_location {
-            self.unused_records.fetch_add(1, Ordering::SeqCst);
-            debug!("Increased unused records: {}", self.unused_records.load(Ordering::SeqCst));
-            //todo threads sync and atomic usage
-            if self.unused_records.load(Ordering::SeqCst) > RECORDS_LIMIT {
+            let mut unused_records = self.unused_records.lock().unwrap();
+            *unused_records += 1;
+            debug!("Increased unused records: {}", *unused_records);
+            if *unused_records > RECORDS_LIMIT {
                 debug!("Unused records exceeds records limit({}). Compaction triggered", RECORDS_LIMIT);
                 self.compact_log()?;
-                self.unused_records.store(0, Ordering::SeqCst);
+                *unused_records = 0;
             }
         }
 
@@ -121,7 +121,7 @@ impl KvsEngine for KvStore {
             .unwrap()
             .remove(&key)
             .ok_or(KeyNotFound)?;
-        self.unused_records.fetch_add(1, Ordering::SeqCst);
+        *self.unused_records.lock().unwrap() += 1;
         Ok(())
     }
 }
