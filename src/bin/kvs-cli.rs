@@ -31,7 +31,7 @@ enum CliCommand {
 fn main() -> kvs::Result<()> {
     TermLogger::init(LevelFilter::Debug, Config::default(), TerminalMode::Stderr).unwrap();
 
-    let mut storage = KvStore::open(env::current_dir()?)?;
+    let storage = KvStore::open(env::current_dir()?)?;
     match CliCommand::from_args() {
         CliCommand::Set { key: k, value: v } => {
             debug!("Set key: {}, value: {}", k, v);

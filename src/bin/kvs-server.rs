@@ -8,7 +8,7 @@ use structopt::clap::arg_enum;
 use structopt::StructOpt;
 
 use kvs::Server;
-use kvs::{KvStore, KvsEngine, Result, SledEngine};
+use kvs::{KvStore, KvsEngine, SledEngine};
 use std::path::PathBuf;
 
 const DEFAULT_ADDRESS: &'static str = "127.0.0.1:4000";

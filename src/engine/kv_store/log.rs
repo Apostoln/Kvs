@@ -1,15 +1,23 @@
-use std::collections::BTreeMap;
 use std::fs;
-use std::io::{Seek, SeekFrom};
+use std::io::{Seek, SeekFrom, BufWriter, BufReader, Write};
 use std::path::PathBuf;
 
 use log::debug;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize}; //todo use it
 
-use super::datafile::*;
 use super::location::*;
 use super::utils::*;
+use super::kv_store::Index;
 use crate::engine::Result;
+use std::sync::Mutex;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
+
+use std::fs::File;
+
+use super::kv_store::Record;
+use std::ffi::OsStr;
+
 
 /// The `Log` is an abstraction over the persistent sequence of records on disk.
 /// It consists of datafiles with records. There are two types of datafiles: active and passive.
@@ -18,12 +26,194 @@ use crate::engine::Result;
 /// New records are added in the end of active datafile.
 /// Passive datafiles contain immutable sequence of records.
 /// Passive datafiles are enumerated monotonically starting from 1.
-pub struct Log {
+/*pub struct Log {
     pub active: ActiveFile,
     pub passive: BTreeMap<u64 /*serial number*/, PassiveFile>, //<u64, Mutex<PassiveFile>
     pub dir_path: PathBuf,
+}*/
+
+#[derive(Debug)]
+struct LogReader;
+
+impl LogReader {
+    pub fn get_reader(&self, location: impl Into<PathBuf>) -> BufReader<File> {
+        let path = location.into();
+        BufReader::new(File::open(path).unwrap())
+    }
 }
 
+#[derive(Debug)]
+pub struct Log {
+    reader: LogReader,
+    writer: Mutex<BufWriter<File>>,
+    pub dir_path: PathBuf,
+    pub last_serial_number: AtomicU64,
+}
+
+impl Log {
+    pub fn open(dir_path: impl Into<PathBuf>) -> Result<Log> {
+        let dir_path = dir_path.into();
+        debug!("Open Log, path: {:?}", dir_path);
+
+        let last_serial_number: u64 = dir_path
+            .read_dir()?
+            .filter_map(std::result::Result::ok)
+            .map(|file| Ok(get_serial_number(&file.path())?))
+            .filter_map(Result::ok)
+            .max()
+            .unwrap_or(0);
+
+        let last_serial_number = AtomicU64::new(last_serial_number);
+
+        let active_file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .append(true)
+            .open(&mut dir_path.join(ACTIVE_FILE_NAME))?;
+        let writer = Mutex::new(BufWriter::new(active_file));
+        let reader = LogReader{};
+
+        Ok(Log {
+            writer,
+            reader,
+            last_serial_number,
+            dir_path,
+        })
+    }
+
+    pub fn get_record(&self, location: &Location) -> Result<Record> {
+        let mut reader = self.reader.get_reader(&location.file.path);
+        reader.seek(SeekFrom::Start(location.offset))?;
+        Ok(serde_json::Deserializer::from_reader(reader.get_mut())
+            .into_iter()
+            .next()
+            .unwrap()?)
+    }
+
+    pub fn set_record(&self, record: &Record) -> Result<Location> {
+        let mut writer = self.writer.lock().unwrap();
+        let pos = writer.seek(SeekFrom::Current(0))?;
+        serde_json::to_writer(writer.get_mut(),record)?;
+        writer.flush()?;
+        Ok(
+            Location::new(pos,
+                         &self.dir_path.join(ACTIVE_FILE_NAME))
+        )
+    }
+
+    //todo update docs
+    pub fn dump(&self) -> Result<()> {
+        debug!("Dump Log");
+        let active_path = self.dir_path.join(ACTIVE_FILE_NAME); //todo move as const to log or smth like this
+        let mut active_file = self.reader.get_reader(&active_path);
+        if active_file.get_mut().metadata()?.len() == 0 {
+            debug!("File is already empty"); // Nothing to do here
+            return Ok(());
+        }
+
+        // Rename current ACTIVE_FILE_NAME to serial_number.passive
+        self.last_serial_number.fetch_add(1, Ordering::SeqCst);
+        let new_path = self.dir_path.join(format!("{}.{}",
+                                                  self.last_serial_number.load(Ordering::SeqCst),
+                                                  PASSIVE_EXT));
+        fs::rename(&active_path, &new_path)?;
+        debug!("Move active file to {:?}", new_path);
+
+        self.create_active()?;
+        let active_file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .append(true)
+            .open(&active_path)?;
+        *self.writer.lock().unwrap() = BufWriter::new(active_file);
+        debug!("Active file writer after dumping: {:?}", self.writer);
+        Ok(())
+    }
+
+    pub fn compact(&self, mut records: Vec<Result<Record>>) -> Result<()> { //todo? change to Vec<Result<impl Serialize>>
+        debug!("Compact Log");
+        self.clear_passives()?;
+
+        let mut counter: u64 = 0; // serial number of passive file
+
+        // Create `counter` passive files with appropriated records on the filesystem
+        let records = &mut records;
+        while !records.is_empty() {
+            counter += 1;
+            let chunk = std::iter::from_fn(|| records.pop())
+                .take(RECORDS_IN_COMPACTED)
+                .collect::<Vec<_>>();
+
+            self.create_passive(chunk, counter)?;
+        }
+        debug!("Created {} compacted passive files", counter);
+        self.last_serial_number.store(counter, Ordering::SeqCst);
+
+        Ok(())
+    }
+    fn create_active(&self) -> Result<()> {
+        let active_file_path = self.dir_path.join(ACTIVE_FILE_NAME);
+        debug!("Create new active file {}", active_file_path.to_str().unwrap()); //todo wtf how to display Path
+
+        fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(active_file_path)?;
+        Ok(())
+    }
+
+    fn create_passive(&self, records: Vec<Result<Record>>, serial_number: u64) -> Result<()> { //todo iter instead of vec?
+        let passive_file_path = self.dir_path.join(format!("{}.{}",
+                                                           serial_number,
+                                                           PASSIVE_EXT));
+        debug!("Create new passive file {:?} from {} records", passive_file_path, records.len());
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .append(true)
+            .open(passive_file_path)?;
+        let mut writer = BufWriter::new(file);
+
+        for record in records {
+            serde_json::to_writer(&mut writer, &record?)?;
+        }
+        writer.flush()?;
+        Ok(())
+    }
+
+    fn clear_passives(&self) -> Result<()> { //todo WIP
+        debug!("Clear passive files");
+        self.dir_path
+            .read_dir()?
+            .filter_map(std::result::Result::ok)
+            .filter(|entry| entry.path().extension() == Some(OsStr::new(PASSIVE_EXT)))
+            .try_for_each(|entry| fs::remove_file(entry.path()))?;
+        Ok(())
+    }
+
+    pub fn index_datafile(&self, index: &mut Index, datafile_path: PathBuf) -> Result<()> {
+        debug!("Index datafile: {:?}", datafile_path);
+        let mut reader= self.reader.get_reader(&datafile_path);
+        let mut pos = reader.seek(SeekFrom::Start(0))?;
+        let mut stream = serde_json::Deserializer::from_reader(reader).into_iter();
+        while let Some(item) = stream.next() {
+            match item? {
+                Record::Set { key, .. } => {
+                    index.insert(key, Location::new(pos, &datafile_path));
+                }
+                Record::Remove { key } => {
+                    index.remove(&key);
+                }
+            }
+            pos = stream.byte_offset() as u64;
+        }
+        Ok(())
+    }
+}
+/*
 impl Log {
     /// Open a `Log` with the given path.
     pub fn open<T>(dir_path: T) -> Result<Log>
@@ -159,3 +349,4 @@ impl Log {
         Ok(())
     }
 }
+*/

@@ -1,15 +1,12 @@
 use std::collections::HashMap;
 use std::fs;
-use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::time::UNIX_EPOCH;
 use std::sync::{Arc, atomic::AtomicU64, atomic::Ordering, Mutex};
 
 use log::debug;
 use serde::{Deserialize, Serialize};
-use serde_json;
 
-use super::datafile::*;
 use super::log::Log;
 use super::location::*;
 use crate::engine::{
@@ -18,6 +15,7 @@ use crate::engine::{
     KvsEngine,
     Result
 };
+use crate::engine::kv_store::utils::{PASSIVE_EXT, ACTIVE_FILE_NAME};
 
 /// Max number of records in one data file.
 /// Compaction will be triggered after exceeding.
@@ -25,14 +23,14 @@ const RECORDS_LIMIT: u64 = 1024; //todo make configurable
 
 /// Record in storage
 #[derive(Serialize, Deserialize, Debug, Clone)]
-enum Command { //todo rename to Record?
+pub enum Record {
     Set { key: String, value: String },
     Remove { key: String },
 }
 
 /// A map that associates a Key with position of its Value on the disk.
 /// Index is used to get values faster.
-type Index = HashMap<String, Location>;
+pub type Index = HashMap<String, Location>;
 
 /// `KvStore` is a log-based storage engine that stores a pairs Key/Value.
 /// The `Log` is a persistent sequence of records on disk, that represents commands to storage like `Set` or `Remove`.
@@ -48,7 +46,7 @@ type Index = HashMap<String, Location>;
 /// ```
 pub struct KvStore {
     index: Arc<Mutex<Index>>, //Arc<RwLock>
-    log: Arc<Mutex<Log>>,
+    log: Arc<Log>,
     unused_records: Arc<AtomicU64>, //Arc<AtomicU64>
     backups_dir: Option<PathBuf>,
 }
@@ -63,7 +61,7 @@ impl KvsEngine for KvStore {
         let index = KvStore::index(&mut log)?;
 
         let index = Arc::new(Mutex::new(index));
-        let log = Arc::new(Mutex::new(log));
+        let log = Arc::new(log);
 
         Ok(KvStore {
             index,
@@ -77,16 +75,15 @@ impl KvsEngine for KvStore {
     /// Returns `None` if the given key does not exist.
     fn get(&self, key: String) -> Result<Option<String>> {
         debug!("Get key: {}", key);
-        let log = Arc::clone(&self.log); //todo Is clone needed?
         self.index
             .lock().unwrap()
             .get(&key)
             .map_or(
                 Ok(None),
                 |location| {
-                    match log.lock().unwrap().get_record(location)? {
-                        Command::Set { value, .. } => Ok(Some(value)),
-                        Command::Remove { .. } => Err(UnexpectedCommand),
+                    match self.log.get_record(location)? {
+                        Record::Set { value, .. } => Ok(Some(value)),
+                        Record::Remove { .. } => Err(UnexpectedCommand),
                     }
                 })
     }
@@ -94,21 +91,12 @@ impl KvsEngine for KvStore {
     /// Set the key and value
     fn set(&self, key: String, value: String) -> Result<()> {
         debug!("Set key: {}, value: {}", key, value);
-        let writer = &mut self
-            .log
-            .lock()
-            .unwrap()
-            .active
-            .writer; //todo handle
-        let pos = writer.seek(SeekFrom::Current(0))?;
+        let cmd = Record::Set { key: key.clone(), value };
+        let location = self.log.set_record(&cmd)?;
 
-        let cmd = Command::Set { key: key.clone(), value };
-
-        serde_json::to_writer(writer.get_mut(), &cmd)?;
-        writer.flush()?;
-
-        if let Some(_) = self.index.lock().unwrap().insert(key, Location { file: DataFile::Active, offset: pos }) {
-            self.unused_records.fetch_add(1, Ordering::SeqCst);
+        let prev_location = self.index.lock().unwrap().insert(key, location);
+        if let Some(_) = prev_location {
+            self.unused_records.fetch_add(1, Ordering::SeqCst); //todo how to oprimize atomic usage?
             debug!("Increased unused records: {}", self.unused_records.load(Ordering::SeqCst));
 
             if self.unused_records.load(Ordering::SeqCst) > RECORDS_LIMIT {
@@ -127,21 +115,13 @@ impl KvsEngine for KvStore {
     /// It returns `KvError::KeyNotFound` if the given key is not found.
     fn remove(&self, key: String) -> Result<()> {
         debug!("Remove key: {}", key);
-
-        let mut writer = &mut self
-            .log
+        let cmd = Record::Remove { key: key.clone() };
+        self.log.set_record(&cmd)?;
+        self.index
             .lock()
             .unwrap()
-            .active
-            .writer;
-
-        self.index.lock().unwrap().remove(&key).ok_or(KeyNotFound)?;
-
-        let cmd = Command::Remove { key };
-
-        serde_json::to_writer(&mut writer, &cmd)?;
-        writer.flush()?;
-
+            .remove(&key)
+            .ok_or(KeyNotFound)?;
         self.unused_records.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
@@ -161,7 +141,7 @@ impl KvStore {
     /// Reindex datafiles.
     fn reindex(&self) -> Result<()> {
         debug!("Reindex");
-        *self.index.lock().unwrap() = KvStore::index(&mut self.log.lock().unwrap())?;
+        *self.index.lock().unwrap() = KvStore::index(&self.log)?;
         Ok(())
     }
 
@@ -171,7 +151,7 @@ impl KvStore {
     /// Backup will be created if specified.
     fn compact_log(&self) -> Result<()> {
         debug!("Compact log");
-        self.log.lock().unwrap().dump()?; //todo dumping is unnecessary here?
+        self.log.dump()?; //todo dumping is unnecessary here?
         self.reindex()?;
 
         // Create backup if specified
@@ -190,42 +170,44 @@ impl KvStore {
 
         // Create new passive files and write actual commands to them,
         // then replace old passive files to new in self.log
-        self.log.lock().unwrap().compact(commands)?;
-        self.reindex()?;
+        self.log.compact(commands)?;
+        self.reindex()?; //todo too much reindex?
 
         Ok(())
     }
 
     /// Copy passive datafiles of `Log` to specified directory.
-    fn backup(&self, mut backup_dir: &PathBuf) -> Result<()> {
+    fn backup(&self, backup_dir: &PathBuf) -> Result<()> {
         debug!("Backup, path: {:?}", backup_dir);
-        fs::create_dir(&mut backup_dir)?;
+        fs::create_dir(&backup_dir)?;
 
-        for passive in self.log.lock().unwrap().passive.values_mut() {
-            let new_file = backup_dir.join(passive.path.file_name().unwrap());
-            fs::copy(&passive.path, new_file)?;
+        for serial_number in 1..self.log.last_serial_number.load(Ordering::SeqCst) {
+            let file_name = format!("{}.{}", serial_number, PASSIVE_EXT);
+            let old_path = self.log.dir_path.join(&file_name);
+            let new_path = backup_dir.join(&file_name);
+            fs::copy(&old_path, &new_path)?;
         }
         Ok(())
     }
 
     /// Return actual commands from `Log`.
-    fn actual_commands(&self) -> Vec<Result<Command>> {
+    fn actual_commands(&self) -> Vec<Result<Record>> {
         //todo move to Log module?
         debug!("Get actual commands");
-        let log = &self.log; //Seems moving this method to Log is impossible due to borrow-checkers error here
         self.index
             .lock() //todo need here? Is mutex needed?
             .unwrap()
             .values()
-            .map(|location| -> Result<Command> {
-                match log.lock().unwrap().get_record(location)? {
-                    Command::Set { key, value } => Ok(Command::Set { key, value }),
+            .map(|location| -> Result<Record> {
+                match self.log.get_record(location)? {
+                    Record::Set { key, value } => Ok(Record::Set { key, value }),
                     _ => Err(UnexpectedCommand),
                 }
             })
             .collect()
     }
 
+    /*
     /// Index actual records from specified datafile.
     fn index_datafile(index: &mut Index, datafile: &mut impl DataFileGetter) -> Result<()> {
         let (path, reader) = datafile.get_inner();
@@ -234,29 +216,30 @@ impl KvStore {
         let mut stream = serde_json::Deserializer::from_reader(reader).into_iter();
         while let Some(item) = stream.next() {
             match item? {
-                Command::Set { key, .. } => {
-                    index.insert(key, Location::new(pos, path)?);
+                Record::Set { key, .. } => {
+                    index.insert(key, Location::new(pos, path));
                 }
-                Command::Remove { key } => {
+                Record::Remove { key } => {
                     index.remove(&key).unwrap();
                 }
             }
             pos = stream.byte_offset() as u64;
         }
         Ok(())
-    }
+    }*/
 
     /// Index active and passive datafiles from `Log`.
-    fn index(log: &mut Log) -> Result<Index> {
-        debug!("Index log");
+    fn index(log: &Log) -> Result<Index> {
+        debug!("Index log {:?}", log);
         let mut index = Index::new();
-
-        for passive in &mut log.passive.values_mut() {
-            KvStore::index_datafile(&mut index, passive)?;
+        for serial_number in 1..=log.last_serial_number.load(Ordering::SeqCst) {
+            let file_name = format!("{}.{}", serial_number, PASSIVE_EXT);
+            let passive_datafile_path = log.dir_path.join(&file_name); //todo duplicate with  backup
+            log.index_datafile(&mut index, passive_datafile_path)?
         }
 
-        let active = &mut log.active;
-        KvStore::index_datafile(&mut index, active)?;
+        let active_datafile_path = log.dir_path.join(ACTIVE_FILE_NAME);
+        log.index_datafile(&mut index, active_datafile_path)?;
 
         Ok(index)
     }
