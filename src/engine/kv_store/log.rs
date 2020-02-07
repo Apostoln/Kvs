@@ -140,7 +140,7 @@ impl Log {
     /// 1. Split commands to chunks of `RECORDS_IN_COMPACTED` elements
     /// 2. Write each chunk to new passive file in log directory.
     /// 3. Collect passive files to BTreeMap and set it to `self.passive`.
-    pub fn compact(&self, mut records: Vec<Result<Record>>) -> Result<()> { //todo? change to Vec<Result<impl Serialize>>
+    pub fn compact(&self, mut records: Vec<Result<Record>>) -> Result<()> {
         debug!("Compact Log");
         self.clear_passives()?;
 
@@ -162,7 +162,27 @@ impl Log {
         Ok(())
     }
 
-    pub fn index_datafile(&self, index: &mut Index, datafile_path: &PathBuf) -> Result<()> {
+    /// Get path of passive datafile with specified `serial_number`
+    /// Note: `serial_number` must refer to an existing file
+    pub fn passive_path(&self, serial_number: u64) -> PathBuf {
+        self.dir_path.join(format!("{}.{}",serial_number, PASSIVE_EXT))
+    }
+
+    /// Index active and passive datafiles from `Log`.
+    pub fn index(&self) -> Result<Index> {
+        debug!("Index log {:?}", &self);
+        let mut index = Index::new();
+        for serial_number in 1..=self.last_serial_number.load(Ordering::SeqCst) {
+            self.index_datafile(&mut index, &self.passive_path(serial_number))?
+        }
+
+        let active_datafile_path = &self.active_file_path;
+        self.index_datafile(&mut index, active_datafile_path)?;
+
+        Ok(index)
+    }
+
+    fn index_datafile(&self, index: &mut Index, datafile_path: &PathBuf) -> Result<()> {
         debug!("Index datafile: {:?}", datafile_path);
         let mut reader= self.reader.get_reader(datafile_path);
         let mut pos = reader.seek(SeekFrom::Start(0))?;
@@ -179,12 +199,6 @@ impl Log {
             pos = stream.byte_offset() as u64;
         }
         Ok(())
-    }
-
-    /// Get path of passive datafile with specified `serial_number`
-    /// Note: `serial_number` must refer to an existing file
-    pub fn passive_path(&self, serial_number: u64) -> PathBuf {
-        self.dir_path.join(format!("{}.{}",serial_number, PASSIVE_EXT))
     }
 
     fn create_active(&self) -> Result<()> {

@@ -58,7 +58,7 @@ impl KvsEngine for KvStore {
         debug!("Open KvStore, path: {:?}", path);
 
         let mut log = Log::open(&path)?;
-        let index = KvStore::index(&mut log)?;
+        let index = log.index()?;
 
         let index = Arc::new(Mutex::new(index));
         let log = Arc::new(log);
@@ -96,9 +96,9 @@ impl KvsEngine for KvStore {
 
         let prev_location = self.index.lock().unwrap().insert(key, location);
         if let Some(_) = prev_location {
-            self.unused_records.fetch_add(1, Ordering::SeqCst); //todo how to oprimize atomic usage?
+            self.unused_records.fetch_add(1, Ordering::SeqCst);
             debug!("Increased unused records: {}", self.unused_records.load(Ordering::SeqCst));
-
+            //todo threads sync and atomic usage
             if self.unused_records.load(Ordering::SeqCst) > RECORDS_LIMIT {
                 debug!("Unused records exceeds records limit({}). Compaction triggered", RECORDS_LIMIT);
                 self.compact_log()?;
@@ -141,7 +141,7 @@ impl KvStore {
     /// Reindex datafiles.
     fn reindex(&self) -> Result<()> {
         debug!("Reindex");
-        *self.index.lock().unwrap() = KvStore::index(&self.log)?;
+        *self.index.lock().unwrap() = self.log.index()?;
         Ok(())
     }
 
@@ -187,16 +187,15 @@ impl KvStore {
             let new_path = backup_dir.join(&file_name);
             fs::copy(&old_path, &new_path)?;
         }
-        //todo backup active file too
+
         Ok(())
     }
 
     /// Return actual commands from `Log`.
     fn actual_commands(&self) -> Vec<Result<Record>> {
-        //todo move to Log module?
         debug!("Get actual commands");
         self.index
-            .lock() //todo need here? Is mutex needed?
+            .lock()
             .unwrap()
             .values()
             .map(|location| -> Result<Record> {
@@ -206,20 +205,6 @@ impl KvStore {
                 }
             })
             .collect()
-    }
-
-    /// Index active and passive datafiles from `Log`.
-    fn index(log: &Log) -> Result<Index> {
-        debug!("Index log {:?}", log);
-        let mut index = Index::new();
-        for serial_number in 1..=log.last_serial_number.load(Ordering::SeqCst) {
-            log.index_datafile(&mut index, &log.passive_path(serial_number))?
-        }
-
-        let active_datafile_path = &log.active_file_path;
-        log.index_datafile(&mut index, active_datafile_path)?;
-
-        Ok(index)
     }
 }
 
