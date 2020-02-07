@@ -182,11 +182,12 @@ impl KvStore {
         fs::create_dir(&backup_dir)?;
 
         for serial_number in 1..self.log.last_serial_number.load(Ordering::SeqCst) {
-            let file_name = format!("{}.{}", serial_number, PASSIVE_EXT);
+            let file_name = format!("{}.{}", serial_number, PASSIVE_EXT); //todo? .passive_path()
             let old_path = self.log.dir_path.join(&file_name);
             let new_path = backup_dir.join(&file_name);
             fs::copy(&old_path, &new_path)?;
         }
+        //todo backup active file too
         Ok(())
     }
 
@@ -207,27 +208,6 @@ impl KvStore {
             .collect()
     }
 
-    /*
-    /// Index actual records from specified datafile.
-    fn index_datafile(index: &mut Index, datafile: &mut impl DataFileGetter) -> Result<()> {
-        let (path, reader) = datafile.get_inner();
-        debug!("Index datafile: {:?}", path);
-        let mut pos = reader.seek(SeekFrom::Start(0))?;
-        let mut stream = serde_json::Deserializer::from_reader(reader).into_iter();
-        while let Some(item) = stream.next() {
-            match item? {
-                Record::Set { key, .. } => {
-                    index.insert(key, Location::new(pos, path));
-                }
-                Record::Remove { key } => {
-                    index.remove(&key).unwrap();
-                }
-            }
-            pos = stream.byte_offset() as u64;
-        }
-        Ok(())
-    }*/
-
     /// Index active and passive datafiles from `Log`.
     fn index(log: &Log) -> Result<Index> {
         debug!("Index log {:?}", log);
@@ -235,10 +215,10 @@ impl KvStore {
         for serial_number in 1..=log.last_serial_number.load(Ordering::SeqCst) {
             let file_name = format!("{}.{}", serial_number, PASSIVE_EXT);
             let passive_datafile_path = log.dir_path.join(&file_name); //todo duplicate with  backup
-            log.index_datafile(&mut index, passive_datafile_path)?
+            log.index_datafile(&mut index, &passive_datafile_path)?
         }
 
-        let active_datafile_path = log.dir_path.join(ACTIVE_FILE_NAME);
+        let active_datafile_path = &log.active_file_path;
         log.index_datafile(&mut index, active_datafile_path)?;
 
         Ok(index)
