@@ -1,6 +1,6 @@
 use std::io;
 use std::io::{BufReader, BufWriter, Write};
-use std::net::{SocketAddr, TcpListener};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -11,6 +11,48 @@ use serde_json;
 use crate::engine::KvsEngine;
 use crate::protocol::{ProtocolError, Request, Response};
 use crate::KvError;
+use crate::thread_pool::{naive_pool::NaiveThreadPool, ThreadPool};
+
+fn handle_connection(stream: &TcpStream, storage: impl KvsEngine) -> Result<(), ProtocolError> {
+    let remote_addr = stream.peer_addr()?.to_string();
+    debug!("Accept client {}", remote_addr);
+
+    let tcp_reader = BufReader::new(stream);
+    let tcp_writer = BufWriter::new(stream);
+    let mut deserializer = serde_json::Deserializer::from_reader(tcp_reader);
+    let incoming_request = Request::deserialize(&mut deserializer)?;
+
+    debug!("Get request");
+    match incoming_request {
+        Request::Get { key } => {
+            debug!("Get key: {}", key);
+            match storage.get(key) {
+                Ok(value) => {
+                    if value.is_none() {
+                        debug!("{}", KvError::KeyNotFound);
+                    }
+                    send_ok(tcp_writer, value)?;
+                }
+                Err(e) => send_error(tcp_writer, e)?,
+            }
+        }
+        Request::Set { key, value } => {
+            debug!("Set key: {}, value: {}", key, value);
+            match storage.set(key, value) {
+                Ok(_) => send_ok(tcp_writer, None)?,
+                Err(e) => send_error(tcp_writer, e)?,
+            }
+        }
+        Request::Rm { key } => {
+            debug!("Remove key: {}", key);
+            match storage.remove(key) {
+                Ok(_) => send_ok(tcp_writer, None)?,
+                Err(e) => send_error(tcp_writer, e)?,
+            }
+        }
+    }
+    Ok(())
+}
 
 fn send_error<W: Write>(writer: W, error: KvError) -> Result<(), ProtocolError> {
     let error_msg = format!("{}", error);
@@ -28,11 +70,13 @@ fn send_ok<W: Write>(writer: W, value: Option<String>) -> Result<(), ProtocolErr
 
 pub struct Server {
     addr: SocketAddr,
+    thread_pool: NaiveThreadPool,
 }
 
 impl Server {
     pub fn new(addr: SocketAddr) -> Server {
-        Server { addr }
+        let thread_pool = NaiveThreadPool::new(8);
+        Server { addr, thread_pool }
     }
 
     pub fn run(&self, storage: impl KvsEngine) -> Result<(), ProtocolError> {
@@ -61,43 +105,10 @@ impl Server {
                 Err(_) => stream?,
             };
 
-            let remote_addr = stream.peer_addr()?.to_string();
-            debug!("Accept client {}", remote_addr);
-
-            let tcp_reader = BufReader::new(&stream);
-            let tcp_writer = BufWriter::new(&stream);
-            let mut deserializer = serde_json::Deserializer::from_reader(tcp_reader);
-            let incoming_request = Request::deserialize(&mut deserializer)?;
-
-            debug!("Get request");
-            match incoming_request {
-                Request::Get { key } => {
-                    debug!("Get key: {}", key);
-                    match storage.get(key) {
-                        Ok(value) => {
-                            if value.is_none() {
-                                debug!("{}", KvError::KeyNotFound);
-                            }
-                            send_ok(tcp_writer, value)?;
-                        }
-                        Err(e) => send_error(tcp_writer, e)?,
-                    }
-                }
-                Request::Set { key, value } => {
-                    debug!("Set key: {}, value: {}", key, value);
-                    match storage.set(key, value) {
-                        Ok(_) => send_ok(tcp_writer, None)?,
-                        Err(e) => send_error(tcp_writer, e)?,
-                    }
-                }
-                Request::Rm { key } => {
-                    debug!("Remove key: {}", key);
-                    match storage.remove(key) {
-                        Ok(_) => send_ok(tcp_writer, None)?,
-                        Err(e) => send_error(tcp_writer, e)?,
-                    }
-                }
-            }
+            let storage = storage.clone();
+            self.thread_pool.spawn(move || {
+                handle_connection(&stream, storage); //todo error handling
+            });
         }
 
         Ok(())

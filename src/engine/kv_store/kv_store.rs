@@ -226,5 +226,4 @@ impl Clone for KvStore {
             backups_dir: self.backups_dir.clone(),
         }
     }
-
 }

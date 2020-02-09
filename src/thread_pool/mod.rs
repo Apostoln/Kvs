@@ -1,4 +1,4 @@
-mod naive_pool;
+pub mod naive_pool;
 
 pub trait ThreadPool {
     fn new(pool_size: u32) -> Self;
