@@ -1,9 +1,14 @@
 use std::thread;
 use std::sync::{Arc, mpsc, Mutex};
 use std::thread::JoinHandle;
-use crate::thread_pool::ThreadPool;
 
-type Job = Box<dyn FnOnce() + Send>;
+use log::{debug, error};
+
+use crate::thread_pool::ThreadPool;
+use std::panic::{catch_unwind, UnwindSafe};
+
+type Job = Box<dyn FnOnce() + Send + UnwindSafe>;
+
 
 struct Worker {
     id : u32,
@@ -21,11 +26,13 @@ impl Worker {
                     .unwrap();
                 match job {
                     Message::New(job) => {
-                        println!("New job for worker #{}", id);
-                        job();
+                        debug!("New job for worker #{}", id);
+                        if let Err(e) = catch_unwind(job) {
+                            error!("Panic recovery at worker #{}: {:?}", id, e);
+                        }
                     },
                     Message::Shutdown => {
-                        println!("Shutdown worker #{}", id);
+                        debug!("Shutdown worker #{}", id);
                         break;
                     },
                 }
@@ -59,7 +66,7 @@ impl ThreadPool for QueueThreadPool {
 
     fn spawn<F>(&self, f: F)
         where
-            F: FnOnce() + Send + 'static
+            F: FnOnce() + Send + UnwindSafe + 'static
     {
         self.sender.send(Message::New(Box::new(f))).unwrap();
     }
@@ -67,14 +74,14 @@ impl ThreadPool for QueueThreadPool {
 
 impl Drop for QueueThreadPool {
     fn drop(&mut self) {
-        println!("Shutdown thread pool and {} workers", self.workers.len());
+        debug!("Shutdown thread pool and {} workers", self.workers.len());
         for _ in &self.workers {
             self.sender.send(Message::Shutdown).unwrap();
         }
 
         for worker in &mut self.workers {
             if let Some(worker) = worker.take() {
-                println!("Shutdown worker #{}", worker.id);
+                debug!("Shutdown worker #{}", worker.id);
                 worker.handler.join().unwrap();
             }
         }

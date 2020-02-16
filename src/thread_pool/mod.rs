@@ -1,3 +1,5 @@
+use std::panic::UnwindSafe;
+
 pub mod naive_pool;
 pub mod queue_pool;
 
@@ -6,5 +8,5 @@ pub trait ThreadPool {
 
     fn spawn<F>(&self, job: F)
         where
-            F: FnOnce() + Send + 'static;
+            F: FnOnce() + Send + UnwindSafe + 'static;
 }
