@@ -12,6 +12,7 @@ use crate::engine::KvsEngine;
 use crate::protocol::{ProtocolError, Request, Response};
 use crate::KvError;
 use crate::thread_pool::{naive_pool::NaiveThreadPool, ThreadPool};
+use crate::thread_pool::queue_pool::QueueThreadPool;
 
 fn handle_connection(stream: &TcpStream, storage: impl KvsEngine) -> Result<(), ProtocolError> {
     let remote_addr = stream.peer_addr()?.to_string();
@@ -70,12 +71,12 @@ fn send_ok<W: Write>(writer: W, value: Option<String>) -> Result<(), ProtocolErr
 
 pub struct Server {
     addr: SocketAddr,
-    thread_pool: NaiveThreadPool,
+    thread_pool: QueueThreadPool,
 }
 
 impl Server {
     pub fn new(addr: SocketAddr) -> Server {
-        let thread_pool = NaiveThreadPool::new(8);
+        let thread_pool = QueueThreadPool::new(8);
         Server { addr, thread_pool }
     }
 
