@@ -11,8 +11,7 @@ use serde_json;
 use crate::engine::KvsEngine;
 use crate::protocol::{ProtocolError, Request, Response};
 use crate::KvError;
-use crate::thread_pool::{naive_pool::NaiveThreadPool, ThreadPool};
-use crate::thread_pool::queue_pool::QueueThreadPool;
+use crate::thread_pool::{NaiveThreadPool, ThreadPool, QueueThreadPool};
 
 fn handle_connection(stream: &TcpStream, storage: impl KvsEngine) -> Result<(), ProtocolError> {
     let remote_addr = stream.peer_addr()?.to_string();
@@ -69,18 +68,18 @@ fn send_ok<W: Write>(writer: W, value: Option<String>) -> Result<(), ProtocolErr
     Ok(serde_json::to_writer(writer, &response)?)
 }
 
-pub struct Server {
+pub struct Server<E: KvsEngine, P: ThreadPool> {
     addr: SocketAddr,
-    thread_pool: QueueThreadPool,
+    thread_pool: P,
+    engine: E,
 }
 
-impl Server {
-    pub fn new(addr: SocketAddr) -> Server {
-        let thread_pool = QueueThreadPool::new(8);
-        Server { addr, thread_pool }
+impl<E: KvsEngine, P: ThreadPool> Server<E, P> {
+    pub fn new(addr: SocketAddr, thread_pool: P, engine: E) -> Self {
+        Server { addr, thread_pool, engine }
     }
 
-    pub fn run(&self, storage: impl KvsEngine) -> Result<(), ProtocolError> {
+    pub fn run(&self) -> Result<(), ProtocolError> {
         //flag for the interruption by SIGINT
         let interrupt = Arc::new(AtomicBool::new(false));
         let interrupt_clone = interrupt.clone();
@@ -106,7 +105,7 @@ impl Server {
                 Err(_) => stream?,
             };
 
-            let storage = storage.clone();
+            let storage = self.engine.clone();
             self.thread_pool.spawn(move || {
                 handle_connection(&stream, storage); //todo error handling
             });

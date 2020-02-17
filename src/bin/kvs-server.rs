@@ -1,5 +1,6 @@
 use std::env;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::process::exit;
 
 use log::{debug, error, info};
@@ -9,7 +10,7 @@ use structopt::StructOpt;
 
 use kvs::Server;
 use kvs::{KvStore, KvsEngine, SledEngine};
-use std::path::PathBuf;
+use kvs::thread_pool::{ThreadPool, QueueThreadPool};
 
 const DEFAULT_ADDRESS: &'static str = "127.0.0.1:4000";
 const ENGINE_PATH: &'static str = "engine";
@@ -109,17 +110,20 @@ fn main() {
 
     process_engine_file(&current_dir, args.engine);
 
-    let server = Server::new(args.addr);
     match args.engine {
-        Engine::Kvs => run::<KvStore>(server, current_dir),
-        Engine::Sled => run::<SledEngine>(server, current_dir),
+        Engine::Kvs => run::<KvStore, QueueThreadPool>(args.addr, current_dir),
+        Engine::Sled => run::<SledEngine, QueueThreadPool>(args.addr, current_dir),
     }
 }
 
-fn run<T: KvsEngine>(server: Server, dir_path: PathBuf) {
+fn run<T: KvsEngine, P: ThreadPool>(addr: SocketAddr, dir_path: PathBuf) {
+    const CORES_NUM : u32 = 8;
+    let thread_pool = P::new(CORES_NUM);
     let engine = T::open(dir_path)
         .expect("Can not open chosen engine");
-    if let Err(e) = server.run(engine) {
+
+    let server = Server::new(addr, thread_pool, engine);
+    if let Err(e) = server.run() {
         error!("{}", e);
         exit(-1);
     }
