@@ -10,7 +10,7 @@ use structopt::StructOpt;
 
 use kvs::Server;
 use kvs::{KvStore, KvsEngine, SledEngine};
-use kvs::thread_pool::{ThreadPool, QueueThreadPool};
+use kvs::thread_pool::{ThreadPool, QueueThreadPool, RayonThreadPool};
 
 const DEFAULT_ADDRESS: &'static str = "127.0.0.1:4000";
 const ENGINE_PATH: &'static str = "engine";
@@ -111,8 +111,8 @@ fn main() {
     process_engine_file(&current_dir, args.engine);
 
     match args.engine {
-        Engine::Kvs => run::<KvStore, QueueThreadPool>(args.addr, current_dir),
-        Engine::Sled => run::<SledEngine, QueueThreadPool>(args.addr, current_dir),
+        Engine::Kvs => run::<KvStore, RayonThreadPool>(args.addr, current_dir),
+        Engine::Sled => run::<SledEngine, RayonThreadPool>(args.addr, current_dir),
     }
 }
 
