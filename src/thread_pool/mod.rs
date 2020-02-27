@@ -13,5 +13,5 @@ pub trait ThreadPool {
 
     fn spawn<F>(&self, job: F)
         where
-            F: FnOnce() + Send + UnwindSafe + 'static;
+            F: FnOnce() + Send + 'static;
 }

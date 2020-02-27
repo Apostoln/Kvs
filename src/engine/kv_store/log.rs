@@ -118,7 +118,7 @@ impl Log {
         // Rename current ACTIVE_FILE_NAME to serial_number.passive
         self.last_serial_number.fetch_add(1, Ordering::SeqCst);
         let new_path = self.passive_path(self.last_serial_number.load(Ordering::SeqCst));
-        fs::rename(active_path, &new_path)?;
+        fs::rename(active_path, &new_path)?; //todo ERROR - reader on another thread will read data from incorrect location in his path
         debug!("Move active file to {:?}", new_path);
 
         self.create_active()?;
@@ -127,7 +127,7 @@ impl Log {
             .write(true)
             .create(true)
             .append(true)
-            .open(active_path)?;
+            .open(active_path)?; //todo remove opening active file twice
         *self.writer.lock().unwrap() = BufWriter::new(active_file);
         debug!("Active file writer after dumping: {:?}", self.writer);
         Ok(())
@@ -142,7 +142,7 @@ impl Log {
     /// 3. Collect passive files to BTreeMap and set it to `self.passive`.
     pub fn compact(&self, mut records: Vec<Result<Record>>) -> Result<()> {
         debug!("Compact Log");
-        self.clear_passives()?;
+        self.clear_passives()?; //todo ERROR if another thread would read after this
 
         let mut counter: u64 = 0; // serial number of passive file
 
@@ -168,21 +168,31 @@ impl Log {
         self.dir_path.join(format!("{}.{}",serial_number, PASSIVE_EXT))
     }
 
-    /// Index active and passive datafiles from `Log`.
     pub fn index(&self) -> Result<Index> {
-        debug!("Index log {:?}", &self);
-        let mut index = Index::new();
-        for serial_number in 1..=self.last_serial_number.load(Ordering::SeqCst) {
-            self.index_datafile(&mut index, &self.passive_path(serial_number))?
-        }
-
-        let active_datafile_path = &self.active_file_path;
-        self.index_datafile(&mut index, active_datafile_path)?;
-
+        let index = Index::new();
+        self.reindex(&index);
         Ok(index)
     }
+    
+    /// Index active and passive datafiles from `Log`.
+    pub fn reindex(&self, index: &Index) -> Result<()> {
+        debug!("Reindex log {:?}", &self);
 
-    fn index_datafile(&self, index: &mut Index, datafile_path: &PathBuf) -> Result<()> {
+        // Clear old_index
+        // Index::clear(&mut self) is unusable because we have only &self
+        // This code is correct until there are no calls to index from other threads
+        index.iter().map(|pair| index.remove(pair.key()));
+
+        for serial_number in 1..=self.last_serial_number.load(Ordering::SeqCst) {
+            self.reindex_datafile(&index, &self.passive_path(serial_number))?
+        }
+
+        self.reindex_datafile(&index, &self.active_file_path)?;
+
+        Ok(())
+    }
+
+    fn reindex_datafile(&self, index: &Index, datafile_path: &PathBuf) -> Result<()> {
         debug!("Index datafile: {:?}", datafile_path);
         let mut reader= self.reader.get_reader(datafile_path);
         let mut pos = reader.seek(SeekFrom::Start(0))?;
@@ -208,7 +218,7 @@ impl Log {
         fs::OpenOptions::new()
             .create(true)
             .write(true)
-            .open(active_file_path)?;
+            .open(active_file_path)?; //todo return it!!!
         Ok(())
     }
 

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::time::UNIX_EPOCH;
 use std::sync::{Arc, atomic::AtomicU64, atomic::Ordering, Mutex};
 
+use lockfree;
 use log::debug;
 use serde::{Deserialize, Serialize};
 
@@ -28,9 +29,10 @@ pub enum Record {
     Remove { key: String },
 }
 
-/// A map that associates a Key with position of its Value on the disk.
+/// A lock-free hashmap that associates a Key with location (position on the disk) of its Value.
 /// Index is used to get values faster.
-pub type Index = HashMap<String, Location>;
+pub type Index = lockfree::map::Map<String, Location>;
+
 
 /// `KvStore` is a log-based storage engine that stores a pairs Key/Value.
 /// The `Log` is a persistent sequence of records on disk, that represents commands to storage like `Set` or `Remove`.
@@ -45,9 +47,9 @@ pub type Index = HashMap<String, Location>;
 /// assert_eq!(storage.get("Key".to_string()).unwrap(), Some("Value".to_string()));
 /// ```
 pub struct KvStore {
-    index: Arc<Mutex<Index>>,
+    index: Arc<Index>,
     log: Arc<Log>,
-    unused_records: Arc<Mutex<u64>>,
+    unused_records: Arc<Mutex<u64>>, //todo replace to atomic and rework synchronization during compact()
     backups_dir: Option<PathBuf>,
 }
 
@@ -57,11 +59,8 @@ impl KvsEngine for KvStore {
         let path = path.into();
         debug!("Open KvStore, path: {:?}", path);
 
-        let mut log = Log::open(&path)?;
-        let index = log.index()?;
-
-        let index = Arc::new(Mutex::new(index));
-        let log = Arc::new(log);
+        let log = Arc::new(Log::open(&path)?);
+        let index = Arc::new(log.index()?);
 
         Ok(KvStore {
             index,
@@ -76,12 +75,11 @@ impl KvsEngine for KvStore {
     fn get(&self, key: String) -> Result<Option<String>> {
         debug!("Get key: {}", key);
         self.index
-            .lock().unwrap()
             .get(&key)
             .map_or(
                 Ok(None),
-                |location| {
-                    match self.log.get_record(location)? {
+                |pair| {
+                    match self.log.get_record(pair.val())? {
                         Record::Set { value, .. } => Ok(Some(value)),
                         Record::Remove { .. } => Err(UnexpectedCommand),
                     }
@@ -94,7 +92,7 @@ impl KvsEngine for KvStore {
         let cmd = Record::Set { key: key.clone(), value };
         let location = self.log.set_record(&cmd)?;
 
-        let prev_location = self.index.lock().unwrap().insert(key, location);
+        let prev_location = self.index.insert(key, location);
         if let Some(_) = prev_location {
             let mut unused_records = self.unused_records.lock().unwrap();
             *unused_records += 1;
@@ -117,8 +115,6 @@ impl KvsEngine for KvStore {
         let cmd = Record::Remove { key: key.clone() };
         self.log.set_record(&cmd)?;
         self.index
-            .lock()
-            .unwrap()
             .remove(&key)
             .ok_or(KeyNotFound)?;
         *self.unused_records.lock().unwrap() += 1;
@@ -138,10 +134,9 @@ impl KvStore {
     }
 
     /// Reindex datafiles.
-    fn reindex(&self) -> Result<()> {
-        debug!("Reindex");
-        *self.index.lock().unwrap() = self.log.index()?;
-        Ok(())
+    fn reindex_log(&self) -> Result<()> {
+        debug!("Reindex log of KvStore");
+        self.log.reindex(&self.index)
     }
 
     /// Compact the `Log`.
@@ -151,7 +146,8 @@ impl KvStore {
     fn compact_log(&self) -> Result<()> {
         debug!("Compact log");
         self.log.dump()?; //todo dumping is unnecessary here?
-        self.reindex()?;
+        // todo bug with race condition here - other thread will read by incorrect path of active path
+        self.reindex_log()?;
 
         // Create backup if specified
         if let Some(backups_dir) = &self.backups_dir {
@@ -170,7 +166,7 @@ impl KvStore {
         // Create new passive files and write actual commands to them,
         // then replace old passive files to new in self.log
         self.log.compact(commands)?;
-        self.reindex()?;
+        self.reindex_log()?;
 
         Ok(())
     }
@@ -194,11 +190,9 @@ impl KvStore {
     fn actual_commands(&self) -> Vec<Result<Record>> {
         debug!("Get actual commands");
         self.index
-            .lock()
-            .unwrap()
-            .values()
-            .map(|location| -> Result<Record> {
-                match self.log.get_record(location)? {
+            .iter()
+            .map(|pair| -> Result<Record> {
+                match self.log.get_record(pair.val())? {
                     Record::Set { key, value } => Ok(Record::Set { key, value }),
                     _ => Err(UnexpectedCommand),
                 }

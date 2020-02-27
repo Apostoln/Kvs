@@ -7,7 +7,7 @@ use log::{debug, error};
 use crate::thread_pool::ThreadPool;
 use std::panic::{catch_unwind, UnwindSafe};
 
-type Job = Box<dyn FnOnce() + Send + UnwindSafe>;
+type Job = Box<dyn FnOnce() + Send>;
 
 
 struct Worker {
@@ -27,9 +27,10 @@ impl Worker {
                 match job {
                     Message::New(job) => {
                         debug!("New job for worker #{}", id);
-                        if let Err(e) = catch_unwind(job) {
-                            error!("Panic recovery at worker #{}: {:?}", id, e);
-                        }
+                        //todo replace catch_unwind to respawning thread
+                        //if let Err(e) = catch_unwind(job) {
+                        //    error!("Panic recovery at worker #{}: {:?}", id, e);
+                        //}
                     },
                     Message::Shutdown => {
                         debug!("Shutdown worker #{}", id);
@@ -66,7 +67,7 @@ impl ThreadPool for QueueThreadPool {
 
     fn spawn<F>(&self, f: F)
         where
-            F: FnOnce() + Send + UnwindSafe + 'static
+            F: FnOnce() + Send + 'static
     {
         self.sender.send(Message::New(Box::new(f))).unwrap();
     }
