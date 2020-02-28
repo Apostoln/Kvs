@@ -118,7 +118,10 @@ impl Log {
         // Rename current ACTIVE_FILE_NAME to serial_number.passive
         self.last_serial_number.fetch_add(1, Ordering::SeqCst);
         let new_path = self.passive_path(self.last_serial_number.load(Ordering::SeqCst));
-        fs::rename(active_path, &new_path)?; //todo ERROR - reader on another thread will read data from incorrect location in his path
+        fs::rename(active_path, &new_path)?;
+        //todo ERROR - reader on another thread will read data from incorrect location in his path
+        //todo ^seems fixed
+
         debug!("Move active file to {:?}", new_path);
 
         self.create_active()?;

@@ -5,7 +5,7 @@ use std::time::UNIX_EPOCH;
 use std::sync::{Arc, atomic::AtomicU64, atomic::Ordering, Mutex};
 
 use lockfree;
-use log::debug;
+use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 
 use super::log::Log;
@@ -81,7 +81,7 @@ impl KvsEngine for KvStore {
                 |pair| {
                     match self.log.get_record(pair.val())? {
                         Record::Set { value, .. } => Ok(Some(value)),
-                        Record::Remove { .. } => Err(UnexpectedCommand),
+                        Record::Remove { .. } => Err(UnexpectedCommand), //todo rly?
                     }
                 })
     }
@@ -133,6 +133,27 @@ impl KvStore {
         self.backups_dir = Some(path);
     }
 
+    /// Dump active file to passive and update index
+    fn dump_log(&self) -> Result<()> {
+        self.log.dump()?;
+        // Change location in index items from ActiveFile to last PassiveFile after dumping to guarantee
+        // invariants of Index and avoid fully reindexing like
+        // self.reindex_log()?;
+        self.index
+            .iter()
+            .filter(|pair| pair.val().file.path == self.log.active_file_path)
+            .for_each(|index_item| {
+                let serial_number = self.log.last_serial_number.load(Ordering::SeqCst);
+                let file_path = self.log.passive_path(serial_number);
+                let location = Location::new(index_item.val().offset, &file_path);
+                if let None = self.index.insert(index_item.key().clone(), location) {
+                    warn!("Maybe invariant are broken during partition reindexing after dumping")
+                }
+            });
+
+        Ok(())
+    }
+
     /// Reindex datafiles.
     fn reindex_log(&self) -> Result<()> {
         debug!("Reindex log of KvStore");
@@ -147,7 +168,7 @@ impl KvStore {
         debug!("Compact log");
         self.log.dump()?; //todo dumping is unnecessary here?
         // todo bug with race condition here - other thread will read by incorrect path of active path
-        self.reindex_log()?;
+        // todo make some kind of global lock for compacting (with channels/condvar/barrier/wait_group/etc
 
         // Create backup if specified
         if let Some(backups_dir) = &self.backups_dir {
@@ -166,7 +187,7 @@ impl KvStore {
         // Create new passive files and write actual commands to them,
         // then replace old passive files to new in self.log
         self.log.compact(commands)?;
-        self.reindex_log()?;
+        self.reindex_log()?; //todo implement indexfile for faster indexing of already compacted files
 
         Ok(())
     }
@@ -205,7 +226,7 @@ impl Drop for KvStore {
     /// Compact the log.
     fn drop(&mut self) {
         debug!("Drop KvStore");
-        if let Err(e) = self.compact_log() {
+        if let Err(e) = self.compact_log() { // todo fix deadlock here
             panic!("Error while dropping KvStore: {}", e);
         }
     }
