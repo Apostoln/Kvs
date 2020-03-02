@@ -226,8 +226,14 @@ impl Drop for KvStore {
     /// Compact the log.
     fn drop(&mut self) {
         debug!("Drop KvStore");
-        if let Err(e) = self.compact_log() { // todo fix deadlock here
-            panic!("Error while dropping KvStore: {}", e);
+        // We must compact the log only if we drop the last ("main") instance of KvStore.
+        // Thus if self.log has only one instance then the whole KvStore has only one instance.
+        // Arc::get_mut() returns Some(_) only if there are no other `Arc` or `Weak`
+        // pointers to the same allocation.
+        if let Some(_) = Arc::get_mut(&mut self.log) {
+            if let Err(e) = self.compact_log() {
+                panic!("Error of compaction while dropping KvStore: {}", e);
+            }
         }
     }
 }
