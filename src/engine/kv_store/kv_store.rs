@@ -16,7 +16,9 @@ use crate::engine::{
     KvsEngine,
     Result
 };
+
 use crate::engine::kv_store::utils::{PASSIVE_EXT, ACTIVE_FILE_NAME};
+use crate::utils::wait_group::WaitGroup;
 
 /// Max number of records in one data file.
 /// Compaction will be triggered after exceeding.
@@ -51,6 +53,7 @@ pub struct KvStore {
     log: Arc<Log>,
     unused_records: Arc<Mutex<u64>>, //todo replace to atomic and rework synchronization during compact()
     backups_dir: Option<PathBuf>,
+    wait_group: WaitGroup,
 }
 
 impl KvsEngine for KvStore {
@@ -67,12 +70,14 @@ impl KvsEngine for KvStore {
             log,
             unused_records: Arc::new(Mutex::new(0)),
             backups_dir: None,
+            wait_group: WaitGroup::new(),
         })
     }
 
     /// Get the value of a given key.
     /// Returns `None` if the given key does not exist.
     fn get(&self, key: String) -> Result<Option<String>> {
+        //let wg_guard = self.wait_group.clone();
         debug!("Get key: {}", key);
         self.index
             .get(&key)
@@ -88,6 +93,7 @@ impl KvsEngine for KvStore {
 
     /// Set the key and value
     fn set(&self, key: String, value: String) -> Result<()> {
+        //let wg_guard = self.wait_group.clone();
         debug!("Set key: {}, value: {}", key, value);
         let cmd = Record::Set { key: key.clone(), value };
         let location = self.log.set_record(&cmd)?;
@@ -98,6 +104,7 @@ impl KvsEngine for KvStore {
             *unused_records += 1;
             debug!("Increased unused records: {}", *unused_records);
             if *unused_records > RECORDS_LIMIT {
+                self.wait_group.wait();
                 debug!("Unused records exceeds records limit({}). Compaction triggered", RECORDS_LIMIT);
                 self.compact_log()?;
                 *unused_records = 0;
@@ -111,6 +118,7 @@ impl KvsEngine for KvStore {
     /// # Error
     /// It returns `KvError::KeyNotFound` if the given key is not found.
     fn remove(&self, key: String) -> Result<()> {
+        //let wg_guard = self.wait_group.clone();
         debug!("Remove key: {}", key);
         let cmd = Record::Remove { key: key.clone() };
         self.log.set_record(&cmd)?;
@@ -245,6 +253,7 @@ impl Clone for KvStore {
             log: Arc::clone(&self.log),
             unused_records: Arc::clone(&self.unused_records),
             backups_dir: self.backups_dir.clone(),
+            wait_group: self.wait_group.clone(),
         }
     }
 }
