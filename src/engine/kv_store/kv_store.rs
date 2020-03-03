@@ -53,7 +53,8 @@ pub struct KvStore {
     log: Arc<Log>,
     unused_records: Arc<Mutex<u64>>, //todo replace to atomic and rework synchronization during compact()
     backups_dir: Option<PathBuf>,
-    wait_group: WaitGroup,
+    commands_waiter: WaitGroup,
+    compaction_waiter: WaitGroup,
 }
 
 impl KvsEngine for KvStore {
@@ -70,14 +71,15 @@ impl KvsEngine for KvStore {
             log,
             unused_records: Arc::new(Mutex::new(0)),
             backups_dir: None,
-            wait_group: WaitGroup::new(),
+            commands_waiter: WaitGroup::new(),
+            compaction_waiter: WaitGroup::new(),
         })
     }
 
     /// Get the value of a given key.
     /// Returns `None` if the given key does not exist.
     fn get(&self, key: String) -> Result<Option<String>> {
-        //let wg_guard = self.wait_group.clone();
+        self.compaction_waiter.wait();
         debug!("Get key: {}", key);
         self.index
             .get(&key)
@@ -93,7 +95,7 @@ impl KvsEngine for KvStore {
 
     /// Set the key and value
     fn set(&self, key: String, value: String) -> Result<()> {
-        //let wg_guard = self.wait_group.clone();
+        self.compaction_waiter.wait();
         debug!("Set key: {}, value: {}", key, value);
         let cmd = Record::Set { key: key.clone(), value };
         let location = self.log.set_record(&cmd)?;
@@ -104,7 +106,10 @@ impl KvsEngine for KvStore {
             *unused_records += 1;
             debug!("Increased unused records: {}", *unused_records);
             if *unused_records > RECORDS_LIMIT {
-                self.wait_group.wait();
+                //
+                let compaction_waiter = self.compaction_waiter.clone(); //must be 1
+                self.commands_waiter.wait();
+                //
                 debug!("Unused records exceeds records limit({}). Compaction triggered", RECORDS_LIMIT);
                 self.compact_log()?;
                 *unused_records = 0;
@@ -118,7 +123,7 @@ impl KvsEngine for KvStore {
     /// # Error
     /// It returns `KvError::KeyNotFound` if the given key is not found.
     fn remove(&self, key: String) -> Result<()> {
-        //let wg_guard = self.wait_group.clone();
+        self.compaction_waiter.wait();
         debug!("Remove key: {}", key);
         let cmd = Record::Remove { key: key.clone() };
         self.log.set_record(&cmd)?;
@@ -253,7 +258,8 @@ impl Clone for KvStore {
             log: Arc::clone(&self.log),
             unused_records: Arc::clone(&self.unused_records),
             backups_dir: self.backups_dir.clone(),
-            wait_group: self.wait_group.clone(),
+            commands_waiter: self.commands_waiter.clone(),
+            compaction_waiter: self.compaction_waiter.clone(),
         }
     }
 }
