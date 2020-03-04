@@ -57,7 +57,6 @@ pub struct KvStore {
     backups_dir: Option<PathBuf>,
     commands_wg: SmartWaitGroup,
     compaction_wg: SmartWaitGroup,
-    is_compaction: Arc<AtomicBool>,
 }
 
 impl KvsEngine for KvStore {
@@ -76,7 +75,6 @@ impl KvsEngine for KvStore {
             backups_dir: None,
             commands_wg: SmartWaitGroup::new(),
             compaction_wg: SmartWaitGroup::new(),
-            is_compaction: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -138,19 +136,15 @@ impl KvStore {
         if let Some(_) = prev_location {
             self.unused_records.fetch_add(1, Ordering::SeqCst);
             debug!("Increased unused records: {}", self.unused_records.load(Ordering::SeqCst));
-            debug!("Is compaction: {}", self.is_compaction.load(Ordering::SeqCst));
 
-            if self.unused_records.load(Ordering::SeqCst) > RECORDS_LIMIT
-                && !self.is_compaction.compare_and_swap(false, true, Ordering::SeqCst)
-            {
-                let compaction_doer = self.compaction_wg.doer();
-                self.commands_wg.waiter().wait();
+            if self.unused_records.load(Ordering::SeqCst) > RECORDS_LIMIT {
+                if let Some(doer) = self.compaction_wg.unique_doer() {
+                    self.commands_wg.waiter().wait(); //todo impl magic with double-ended wait_group
 
-                debug!("Unused records exceeds records limit({}). Compaction triggered", RECORDS_LIMIT);
-                self.compact_log()?;
-                self.unused_records.store(0, Ordering::SeqCst);
-
-                self.is_compaction.store(false, Ordering::SeqCst);
+                    debug!("Unused records exceeds records limit({}). Compaction triggered", RECORDS_LIMIT);
+                    self.compact_log()?;
+                    self.unused_records.store(0, Ordering::SeqCst);
+                }
             }
         }
         Ok(())
@@ -282,7 +276,6 @@ impl Clone for KvStore {
             backups_dir: self.backups_dir.clone(),
             commands_wg: self.commands_wg.clone(),
             compaction_wg: self.compaction_wg.clone(),
-            is_compaction: Arc::clone(&self.is_compaction),
         }
     }
 }
