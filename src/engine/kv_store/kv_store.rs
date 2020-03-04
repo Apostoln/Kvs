@@ -7,6 +7,7 @@ use std::sync::{Arc, atomic::AtomicU64, atomic::Ordering, Mutex};
 use lockfree;
 use log::{debug, warn};
 use serde::{Deserialize, Serialize};
+use wait_group::WaitGroup;
 
 use super::log::Log;
 use super::location::*;
@@ -18,7 +19,6 @@ use crate::engine::{
 };
 
 use crate::engine::kv_store::utils::{PASSIVE_EXT, ACTIVE_FILE_NAME};
-use crate::utils::wait_group::WaitGroup;
 
 /// Max number of records in one data file.
 /// Compaction will be triggered after exceeding.
