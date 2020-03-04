@@ -7,7 +7,7 @@ use std::sync::{Arc, atomic::AtomicU64, atomic::Ordering, Mutex};
 use lockfree;
 use log::{debug, warn};
 use serde::{Deserialize, Serialize};
-use wait_group::WaitGroup;
+use wait_group::SmartWaitGroup;
 
 use super::log::Log;
 use super::location::*;
@@ -53,8 +53,8 @@ pub struct KvStore {
     log: Arc<Log>,
     unused_records: Arc<Mutex<u64>>, //todo replace to atomic and rework synchronization during compact()
     backups_dir: Option<PathBuf>,
-    commands_waiter: WaitGroup,
-    compaction_waiter: WaitGroup,
+    commands_wg: SmartWaitGroup,
+    compaction_wg: SmartWaitGroup,
 }
 
 impl KvsEngine for KvStore {
@@ -71,15 +71,16 @@ impl KvsEngine for KvStore {
             log,
             unused_records: Arc::new(Mutex::new(0)),
             backups_dir: None,
-            commands_waiter: WaitGroup::new(),
-            compaction_waiter: WaitGroup::new(),
+            commands_wg: SmartWaitGroup::new(),
+            compaction_wg: SmartWaitGroup::new(),
         })
     }
 
     /// Get the value of a given key.
     /// Returns `None` if the given key does not exist.
     fn get(&self, key: String) -> Result<Option<String>> {
-        self.compaction_waiter.wait();
+        let doer = self.commands_wg.doer();
+        self.compaction_wg.waiter().wait();
         debug!("Get key: {}", key);
         self.index
             .get(&key)
@@ -95,21 +96,21 @@ impl KvsEngine for KvStore {
 
     /// Set the key and value
     fn set(&self, key: String, value: String) -> Result<()> {
-        self.compaction_waiter.wait();
+        let doer = self.commands_wg.doer();
+        self.compaction_wg.waiter().wait();
         debug!("Set key: {}, value: {}", key, value);
         let cmd = Record::Set { key: key.clone(), value };
         let location = self.log.set_record(&cmd)?;
 
         let prev_location = self.index.insert(key, location);
+        drop(doer);
         if let Some(_) = prev_location {
             let mut unused_records = self.unused_records.lock().unwrap();
             *unused_records += 1;
             debug!("Increased unused records: {}", *unused_records);
             if *unused_records > RECORDS_LIMIT {
-                //
-                let compaction_waiter = self.compaction_waiter.clone(); //must be 1
-                self.commands_waiter.wait();
-                //
+                self.commands_wg.waiter().wait();
+                let compaction_doer = self.compaction_wg.doer();
                 debug!("Unused records exceeds records limit({}). Compaction triggered", RECORDS_LIMIT);
                 self.compact_log()?;
                 *unused_records = 0;
@@ -123,7 +124,8 @@ impl KvsEngine for KvStore {
     /// # Error
     /// It returns `KvError::KeyNotFound` if the given key is not found.
     fn remove(&self, key: String) -> Result<()> {
-        self.compaction_waiter.wait();
+        let doer = self.commands_wg.doer();
+        self.compaction_wg.waiter().wait();
         debug!("Remove key: {}", key);
         let cmd = Record::Remove { key: key.clone() };
         self.log.set_record(&cmd)?;
@@ -247,6 +249,8 @@ impl Drop for KvStore {
             if let Err(e) = self.compact_log() {
                 panic!("Error of compaction while dropping KvStore: {}", e);
             }
+        } else {
+            debug!("No compaction while drop");
         }
     }
 }
@@ -258,8 +262,8 @@ impl Clone for KvStore {
             log: Arc::clone(&self.log),
             unused_records: Arc::clone(&self.unused_records),
             backups_dir: self.backups_dir.clone(),
-            commands_waiter: self.commands_waiter.clone(),
-            compaction_waiter: self.compaction_waiter.clone(),
+            commands_wg: self.commands_wg.clone(),
+            compaction_wg: self.compaction_wg.clone(),
         }
     }
 }
