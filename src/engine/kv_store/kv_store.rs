@@ -85,6 +85,7 @@ impl KvsEngine for KvStore {
     fn get(&self, key: String) -> Result<Option<String>> {
         let doer = self.commands_wg.doer();
         self.compaction_wg.waiter().wait();
+
         debug!("Get key: {}", key);
         self.index
             .get(&key)
@@ -104,6 +105,7 @@ impl KvsEngine for KvStore {
         {
             let doer = self.commands_wg.doer();
             self.compaction_wg.waiter().wait();
+
             debug!("Set key: {}, value: {}", key, value);
             let cmd = Record::Set { key: key.clone(), value };
             let location = self.log.set_record(&cmd)?;
@@ -118,6 +120,7 @@ impl KvsEngine for KvStore {
     fn remove(&self, key: String) -> Result<()> {
         let doer = self.commands_wg.doer();
         self.compaction_wg.waiter().wait();
+
         debug!("Remove key: {}", key);
         let cmd = Record::Remove { key: key.clone() };
         self.log.set_record(&cmd)?;
@@ -140,8 +143,8 @@ impl KvStore {
             if self.unused_records.load(Ordering::SeqCst) > RECORDS_LIMIT
                 && !self.is_compaction.compare_and_swap(false, true, Ordering::SeqCst)
             {
-                self.commands_wg.waiter().wait();
                 let compaction_doer = self.compaction_wg.doer();
+                self.commands_wg.waiter().wait();
 
                 debug!("Unused records exceeds records limit({}). Compaction triggered", RECORDS_LIMIT);
                 self.compact_log()?;
