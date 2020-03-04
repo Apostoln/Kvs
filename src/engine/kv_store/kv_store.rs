@@ -2,12 +2,12 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::time::UNIX_EPOCH;
-use std::sync::{Arc, atomic::AtomicU64, atomic::Ordering, Mutex};
+use std::sync::{Arc, atomic::{AtomicBool, AtomicU64}, atomic::Ordering, Mutex};
 
 use lockfree;
 use log::{debug, warn};
 use serde::{Deserialize, Serialize};
-use wait_group::SmartWaitGroup;
+use wait_group::{SmartWaitGroup, Doer};
 
 use super::log::Log;
 use super::location::*;
@@ -53,10 +53,11 @@ type IndexEntry = Removed<String, Location>;
 pub struct KvStore {
     index: Arc<Index>,
     log: Arc<Log>,
-    unused_records: Arc<AtomicU64>, //todo replace to atomic and rework synchronization during compact()
+    unused_records: Arc<AtomicU64>,
     backups_dir: Option<PathBuf>,
     commands_wg: SmartWaitGroup,
     compaction_wg: SmartWaitGroup,
+    is_compaction: Arc<AtomicBool>,
 }
 
 impl KvsEngine for KvStore {
@@ -75,6 +76,7 @@ impl KvsEngine for KvStore {
             backups_dir: None,
             commands_wg: SmartWaitGroup::new(),
             compaction_wg: SmartWaitGroup::new(),
+            is_compaction: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -98,7 +100,7 @@ impl KvsEngine for KvStore {
 
     /// Set the key and value
     fn set(&self, key: String, value: String) -> Result<()> {
-        let mut prev_location: Option<IndexEntry> = None;
+        let mut prev_location = None;
         {
             let doer = self.commands_wg.doer();
             self.compaction_wg.waiter().wait();
@@ -129,19 +131,23 @@ impl KvsEngine for KvStore {
 
 impl KvStore {
     fn check_and_compact_log(&self, prev_location: Option<IndexEntry>) -> Result<()> {
+        debug!("Check previous value (IndexEntry) by this key");
         if let Some(_) = prev_location {
             self.unused_records.fetch_add(1, Ordering::SeqCst);
             debug!("Increased unused records: {}", self.unused_records.load(Ordering::SeqCst));
+            debug!("Is compaction: {}", self.is_compaction.load(Ordering::SeqCst));
 
-            let magic_wg = SmartWaitGroup::new();
-
-            if self.unused_records.load(Ordering::SeqCst) > RECORDS_LIMIT {
-                //todo make syncronization here!!!
+            if self.unused_records.load(Ordering::SeqCst) > RECORDS_LIMIT
+                && !self.is_compaction.compare_and_swap(false, true, Ordering::SeqCst)
+            {
                 self.commands_wg.waiter().wait();
                 let compaction_doer = self.compaction_wg.doer();
+
                 debug!("Unused records exceeds records limit({}). Compaction triggered", RECORDS_LIMIT);
                 self.compact_log()?;
-                self.unused_records.store(0, Ordering::SeqCst)
+                self.unused_records.store(0, Ordering::SeqCst);
+
+                self.is_compaction.store(false, Ordering::SeqCst);
             }
         }
         Ok(())
@@ -273,6 +279,7 @@ impl Clone for KvStore {
             backups_dir: self.backups_dir.clone(),
             commands_wg: self.commands_wg.clone(),
             compaction_wg: self.compaction_wg.clone(),
+            is_compaction: Arc::clone(&self.is_compaction),
         }
     }
 }

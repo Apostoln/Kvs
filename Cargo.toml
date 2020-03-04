@@ -24,7 +24,7 @@ criterion = "0.3"
 rand = { version = "0.7", features =["small_rng"] }
 rayon = "1.3.0"
 lockfree = "0.5.1"
-wait_group = { version = "0.1.0", git = "https://github.com/Apostoln/WaitGroup", rev = "07e4606" }
+wait_group = { version = "0.1.0", git = "https://github.com/Apostoln/WaitGroup", rev = "7251e6b" }
 
 [[bench]]
 name = "engine_bench"
