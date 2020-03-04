@@ -19,6 +19,7 @@ use crate::engine::{
 };
 
 use crate::engine::kv_store::utils::{PASSIVE_EXT, ACTIVE_FILE_NAME};
+use lockfree::map::Removed;
 
 /// Max number of records in one data file.
 /// Compaction will be triggered after exceeding.
@@ -34,6 +35,7 @@ pub enum Record {
 /// A lock-free hashmap that associates a Key with location (position on the disk) of its Value.
 /// Index is used to get values faster.
 pub type Index = lockfree::map::Map<String, Location>;
+type IndexEntry = Removed<String, Location>;
 
 
 /// `KvStore` is a log-based storage engine that stores a pairs Key/Value.
@@ -51,7 +53,7 @@ pub type Index = lockfree::map::Map<String, Location>;
 pub struct KvStore {
     index: Arc<Index>,
     log: Arc<Log>,
-    unused_records: Arc<Mutex<u64>>, //todo replace to atomic and rework synchronization during compact()
+    unused_records: Arc<AtomicU64>, //todo replace to atomic and rework synchronization during compact()
     backups_dir: Option<PathBuf>,
     commands_wg: SmartWaitGroup,
     compaction_wg: SmartWaitGroup,
@@ -69,7 +71,7 @@ impl KvsEngine for KvStore {
         Ok(KvStore {
             index,
             log,
-            unused_records: Arc::new(Mutex::new(0)),
+            unused_records: Arc::new(AtomicU64::new(0)),
             backups_dir: None,
             commands_wg: SmartWaitGroup::new(),
             compaction_wg: SmartWaitGroup::new(),
@@ -96,28 +98,16 @@ impl KvsEngine for KvStore {
 
     /// Set the key and value
     fn set(&self, key: String, value: String) -> Result<()> {
-        let doer = self.commands_wg.doer();
-        self.compaction_wg.waiter().wait();
-        debug!("Set key: {}, value: {}", key, value);
-        let cmd = Record::Set { key: key.clone(), value };
-        let location = self.log.set_record(&cmd)?;
-
-        let prev_location = self.index.insert(key, location);
-        drop(doer);
-        if let Some(_) = prev_location {
-            let mut unused_records = self.unused_records.lock().unwrap();
-            *unused_records += 1;
-            debug!("Increased unused records: {}", *unused_records);
-            if *unused_records > RECORDS_LIMIT {
-                self.commands_wg.waiter().wait();
-                let compaction_doer = self.compaction_wg.doer();
-                debug!("Unused records exceeds records limit({}). Compaction triggered", RECORDS_LIMIT);
-                self.compact_log()?;
-                *unused_records = 0;
-            }
+        let mut prev_location: Option<IndexEntry> = None;
+        {
+            let doer = self.commands_wg.doer();
+            self.compaction_wg.waiter().wait();
+            debug!("Set key: {}, value: {}", key, value);
+            let cmd = Record::Set { key: key.clone(), value };
+            let location = self.log.set_record(&cmd)?;
+            prev_location = self.index.insert(key, location);
         }
-
-        Ok(())
+        self.check_and_compact_log(prev_location)
     }
 
     /// Remove a given key.
@@ -132,12 +122,31 @@ impl KvsEngine for KvStore {
         self.index
             .remove(&key)
             .ok_or(KeyNotFound)?;
-        *self.unused_records.lock().unwrap() += 1;
+        self.unused_records.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
 }
 
 impl KvStore {
+    fn check_and_compact_log(&self, prev_location: Option<IndexEntry>) -> Result<()> {
+        if let Some(_) = prev_location {
+            self.unused_records.fetch_add(1, Ordering::SeqCst);
+            debug!("Increased unused records: {}", self.unused_records.load(Ordering::SeqCst));
+
+            let magic_wg = SmartWaitGroup::new();
+
+            if self.unused_records.load(Ordering::SeqCst) > RECORDS_LIMIT {
+                //todo make syncronization here!!!
+                self.commands_wg.waiter().wait();
+                let compaction_doer = self.compaction_wg.doer();
+                debug!("Unused records exceeds records limit({}). Compaction triggered", RECORDS_LIMIT);
+                self.compact_log()?;
+                self.unused_records.store(0, Ordering::SeqCst)
+            }
+        }
+        Ok(())
+    }
+
     /// Set path for saving backups.
     pub fn set_backups_dir<T>(&mut self, path: T)
     where
