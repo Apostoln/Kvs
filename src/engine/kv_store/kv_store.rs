@@ -7,7 +7,8 @@ use std::sync::{Arc, atomic::{AtomicBool, AtomicU64}, atomic::Ordering, Mutex};
 use lockfree;
 use log::{debug, warn};
 use serde::{Deserialize, Serialize};
-use wait_group::{SmartWaitGroup, Doer};
+use wait_group::{SmartWaitGroup, Doer, switch, switch_unique};
+
 
 use super::log::Log;
 use super::location::*;
@@ -81,9 +82,7 @@ impl KvsEngine for KvStore {
     /// Get the value of a given key.
     /// Returns `None` if the given key does not exist.
     fn get(&self, key: String) -> Result<Option<String>> {
-        let doer = self.commands_wg.doer();
-        self.compaction_wg.waiter().wait();
-
+        let commands_doer = switch(&self.commands_wg, &self.compaction_wg);
         debug!("Get key: {}", key);
         self.index
             .get(&key)
@@ -101,9 +100,7 @@ impl KvsEngine for KvStore {
     fn set(&self, key: String, value: String) -> Result<()> {
         let mut prev_location = None;
         {
-            let doer = self.commands_wg.doer();
-            self.compaction_wg.waiter().wait();
-
+            let commands_doer = switch(&self.commands_wg, &self.compaction_wg);
             debug!("Set key: {}, value: {}", key, value);
             let cmd = Record::Set { key: key.clone(), value };
             let location = self.log.set_record(&cmd)?;
@@ -116,9 +113,7 @@ impl KvsEngine for KvStore {
     /// # Error
     /// It returns `KvError::KeyNotFound` if the given key is not found.
     fn remove(&self, key: String) -> Result<()> {
-        let doer = self.commands_wg.doer();
-        self.compaction_wg.waiter().wait();
-
+        let commands_doer = switch(&self.commands_wg, &self.compaction_wg);
         debug!("Remove key: {}", key);
         let cmd = Record::Remove { key: key.clone() };
         self.log.set_record(&cmd)?;
@@ -138,9 +133,7 @@ impl KvStore {
             debug!("Increased unused records: {}", self.unused_records.load(Ordering::SeqCst));
 
             if self.unused_records.load(Ordering::SeqCst) > RECORDS_LIMIT {
-                if let Some(doer) = self.compaction_wg.unique_doer() {
-                    self.commands_wg.waiter().wait(); //todo impl magic with double-ended wait_group
-
+                if let Some(compact_doer) = switch_unique(&self.compaction_wg, &self.commands_wg) {
                     debug!("Unused records exceeds records limit({}). Compaction triggered", RECORDS_LIMIT);
                     self.compact_log()?;
                     self.unused_records.store(0, Ordering::SeqCst);
