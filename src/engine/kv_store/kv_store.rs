@@ -186,9 +186,7 @@ impl KvStore {
     /// Backup will be created if specified.
     fn compact_log(&self) -> Result<()> {
         debug!("Compact log");
-        self.dump_log()?; //todo dumping is unnecessary here?
-        // todo bug with race condition here - other thread will read by incorrect path of active path
-        // todo make some kind of global lock for compacting (with channels/condvar/barrier/wait_group/etc)
+        self.dump_log()?;
 
         // Create backup if specified
         if let Some(backups_dir) = &self.backups_dir {

@@ -119,8 +119,6 @@ impl Log {
         self.last_serial_number.fetch_add(1, Ordering::SeqCst);
         let new_path = self.passive_path(self.last_serial_number.load(Ordering::SeqCst));
         fs::rename(active_path, &new_path)?;
-        //todo ERROR - reader on another thread will read data from incorrect location in his path
-        //todo ^seems fixed
 
         debug!("Move active file to {:?}", new_path);
 
@@ -145,7 +143,7 @@ impl Log {
     /// 3. Collect passive files to BTreeMap and set it to `self.passive`.
     pub fn compact(&self, mut records: Vec<Result<Record>>) -> Result<()> {
         debug!("Compact Log");
-        self.clear_passives()?; //todo ERROR if another thread would read after this
+        self.clear_passives()?;
 
         let mut counter: u64 = 0; // serial number of passive file
 
